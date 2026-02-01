@@ -1,85 +1,51 @@
 # Simple Tasks for Obsidian
 
-A stateless, zero-database task management plugin for Obsidian. Simple Tasks scans your vault in real-time to aggregate tasks based on simple markdown syntax, without requiring complex setup or database maintenance.
+A stateless, zero-database task management plugin for Obsidian. Simple Tasks scans your vault in real-time using Obsidian's metadata cache to aggregate tasks based on simple markdown syntax.
 
 ## Features
 
-- **Zero-Config**: Works out of the box by scanning standard markdown tasks.
-- **Stateless**: No database to maintain; tasks are always up-to-date with your notes.
-- **Powerful Filtering**: Filter by status, category, date range, tags, and text.
-- **Exclusions**: Globally exclude specific folders (e.g., Templates, Archive) or tags.
-- **Interactive View**: Toggle tasks, sort, and search directly from the task list.
-- **Category Autocomplete**: Get suggestions for existing categories while you type.
-
-## Installation
-
-1.  Download the `main.js`, `manifest.json`, and `styles.css` files.
-2.  Create a folder named `Simple-tasks` in your vault's `.obsidian/plugins/` directory.
-3.  Place the downloaded files into that folder.
-4.  Restart Obsidian or reload plugins.
-5.  Enable "Simple Tasks" in **Settings > Community Plugins**.
+- **High Performance**: Uses `metadataCache` for fast scanning.
+- **Live Updates**: Automatically refreshes views when you modify your notes.
+- **Smart Autocomplete**: Type `[]` anywhere in a line to pick a category and auto-format/convert the line into a task.
+- **Collapsible Filters**: Keep your workspace clean by collapsing the filter settings while keeping the task list visible.
+- **Dual View Modes**: Show a task list and a progress summary (Stats) simultaneously.
 
 ## Task Syntax
 
-Simple Tasks recognizes standard markdown tasks. You can add optional metadata like categories and due dates.
+Simple Tasks recognizes standard markdown tasks. You can enrich them with categories, dates, and tags.
 
 - **Standard Task**: `- [ ] Buy milk`
 - **With Category**: `- [ ] ==Personal== Buy milk`
-  - Categories are defined by highlighting text with `==`.
-  - **Autocomplete**: Type `==` in any note to see a list of existing categories found in your vault.
-- **With Due Date**: `- [ ] Buy milk 2025-03-01`
-  - Dates must be in `YYYY-MM-DD` format.
-- **With Tags**: `- [ ] Buy milk #groceries`
+  - Categories are defined using highlight syntax `==`.
+- **With Due Date**: `- [ ] Buy milk 2025-03-01` (Format: `YYYY-MM-DD`)
+
+### Smart Task Creation
+In any note, type `[]` (or `[ ]`, `[x]`) anywhere in a line. 
+1.  A category menu appears immediately.
+2.  Selecting a category inserts it at your cursor.
+3.  If the line isn't a task, it is automatically converted (prepending `- [ ]`).
+4.  To add more categories, simply type `[]` again.
 
 ## Creating a Task View
 
-To display tasks, create a code block using `simpletasks`. You can configure the view using a simple query syntax.
+Create a code block starting with `simpletasks`. Use the **Save 💾** button in the header to persist your interactive filters back to the code block.
 
-### Basic Usage
+### Configuration Options
 
-```simpletasks
-status: all
-```
+| Option | Values | Description |
+| :--- | :--- | :--- |
+| `title:` | `text` | The title displayed in the header. |
+| `view:` | `list`, `stats`, `list stats` | Choose to show the list, the stats summary, or both. |
+| `status:` | `undone`, `done`, `all` | Filter by completion status. |
+| `sort:` | `date`, `file` | Sort order (Default: `date`). |
+| `exclude-tags:` | `#tag1 #tag2` | Hide tasks containing specific tags (space separated). |
+| `exclude-folders:`| `Folder1, Folder2` | Hide tasks from specific folders (comma separated). |
+| `expanded:` | `true`, `false` | Whether the filter header is expanded by default. |
 
-### Advanced Filtering
+## Interactive Controls
 
-You can combine multiple filters in the configuration line.
-
-```simpletasks
-filter: ==Work== done exclude: #archive sort: date
-```
-
-**Configuration Options:**
-
-*   **Status**:
-    *   `done`: Show only completed tasks.
-    *   `undone`: Show only incomplete tasks.
-    *   `all`: Show all tasks (default).
-*   **Category Filter**:
-    *   `==CategoryName==`: Only show tasks containing this specific highlighted category.
-*   **Exclusions**:
-    *   `exclude: #tag`: Exclude tasks that contain a specific tag.
-*   **Sorting**:
-    *   `sort: date`: Sort by due date (YYYY-MM-DD).
-    *   `sort: file`: Sort alphabetically by file path.
-
-## Interactive Filters
-
-Once the view is rendered, you can refine the list using the controls at the top:
-
-*   **Search**: Filter by text.
-*   **Date Range**: Use the "From" and "To" date pickers to show tasks within a specific timeframe.
-*   **Category Chips**: Click on the category names (e.g., `Work`, `Personal`) to instantly filter tasks by that category. Clicking "All" resets the filter.
-*   **Refresh**: Re-scan the vault to pick up changes made in other notes.
-
-## Settings
-
-Go to **Settings > Simple Tasks** to configure global options.
-
-*   **Excluded Folders**: Add folders here to completely ignore them during the vault scan (e.g., `Templates`, `Archive`). You can search and select existing folders from your vault.
-*   **Excluded Tags**: Specify tags to globally exclude from all Simple Tasks views (e.g., `#hidden`).
-
-## Usage Tips
-
-*   **Click to Navigate**: Clicking the text of a task in the list will open the original note and scroll to the task.
-*   **Autocomplete**: When creating tasks, type `==` to quickly select a category you've used before. This helps keep your categories consistent.
+- **Collapse Button (+ / −)**: Located in the title line, toggles filter visibility.
+- **View Checkboxes**: Toggle "List" and "Stats" views in real-time.
+- **Save Filters (💾)**: Overwrites the code block with your current interactive configuration.
+- **Category Chips**: Click chips to toggle multi-category filtering. "All" resets filters.
+- **Rescan (⟳)**: Force a manual vault scan.
