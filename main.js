@@ -45,11 +45,12 @@ class TaskScanner {
                 const taskMatch = line.match(/^(\s*[-*]\s*)\[([ xX])\]\s*(.*)$/);
                 if (taskMatch) {
                     const text = taskMatch[3];
+                    // Extract categories
                     const categories = [];
                     const catRegex = /==([^=]+)==/g;
                     let match;
                     while ((match = catRegex.exec(text)) !== null) {
-                        const cat = match[1].trim();
+                        const cat = match[1].trim().toUpperCase();
                         if (cat) {
                             categories.push(cat);
                             categoriesSet.add(cat);
@@ -151,7 +152,7 @@ class CategorySuggest extends EditorSuggest {
         return Array.from(cache).filter(cat => {
             const l = cat.toLowerCase();
             return l.includes(query) && !existing.has(l);
-        }).sort().map(cat => ({ label: cat, value: cat }));
+        }).sort().map(cat => ({ label: cat.toUpperCase(), value: cat.toUpperCase() }));
     }
     renderSuggestion(suggestion, el) { el.setText(suggestion.label); }
     selectSuggestion(suggestion) {
@@ -404,11 +405,11 @@ class SimpleTasksView extends MarkdownRenderChild {
     }
     renderCategoryBar() {
         if (!this.categoryBar) return; this.categoryBar.empty();
-        const clearBtn = this.categoryBar.createEl('div', { text: 'All', cls: 'simple-tasks-chip' });
+        const clearBtn = this.categoryBar.createEl('div', { text: 'ALL', cls: 'simple-tasks-chip' });
         clearBtn.onclick = () => { this.state.filterCategories.clear(); this.renderCategoryBar(); this.renderList(); };
         Array.from(this.state.availableCategories).sort().forEach(cat => {
             const isActive = this.state.filterCategories.has(cat.toLowerCase());
-            const chip = this.categoryBar.createEl('div', { text: cat, cls: `simple-tasks-chip ${isActive ? 'is-active' : ''}` });
+            const chip = this.categoryBar.createEl('div', { text: cat.toUpperCase(), cls: `simple-tasks-chip ${isActive ? 'is-active' : ''}` });
             chip.onclick = () => { if (isActive) this.state.filterCategories.delete(cat.toLowerCase()); else this.state.filterCategories.add(cat.toLowerCase()); this.renderCategoryBar(); this.renderList(); };
         });
     }
@@ -528,7 +529,7 @@ class SimpleTasksView extends MarkdownRenderChild {
             
                         parts.forEach((part, idx) => {
                             if (part && part.startsWith('==')) {
-                                div.createSpan({ cls: 'simple-tasks-category', text: part.replace(/==/g, '') });
+                                div.createSpan({ cls: 'simple-tasks-category', text: part.replace(/==/g, '').toUpperCase() });
                             } else if (part && part.match(/^\d{4}-\d{2}-\d{2}$/)) {
                                 if (idx === lastDatePartIndex) {
                                     const dateSpan = div.createSpan({
@@ -624,7 +625,7 @@ class SimpleTasksView extends MarkdownRenderChild {
 
     renderStats(tasks) {
         const stats = {};
-        tasks.forEach(t => { const cats = t.categories.length > 0 ? t.categories : ['Uncategorized']; cats.forEach(c => { const lower = c.toLowerCase(); if (!stats[lower]) stats[lower] = { label: c, total: 0, done: 0 }; stats[lower].total++; if (t.status) stats[lower].done++; }); });
+        tasks.forEach(t => { const cats = t.categories.length > 0 ? t.categories : ['Uncategorized']; cats.forEach(c => { const lower = c.toLowerCase(); if (!stats[lower]) stats[lower] = { label: c.toUpperCase(), total: 0, done: 0 }; stats[lower].total++; if (t.status) stats[lower].done++; }); });
         const container = this.listContainer.createDiv('simple-tasks-stats-inline');
         Object.entries(stats).sort((a, b) => a[0].localeCompare(b[0])).forEach(([key, data]) => {
             const stat = container.createSpan({ cls: 'simple-tasks-stat-item' });

@@ -175,9 +175,8 @@
 .simple-tasks-content {
     flex-grow: 1;
     cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow: visible;
+    white-space: normal;
 }
 
 .simple-tasks-category {
