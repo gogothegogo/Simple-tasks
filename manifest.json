@@ -1,0 +1,8 @@
+{
+  "id": "simple-tasks",
+  "name": "Simple Tasks",
+  "version": "1.0.0",
+  "description": "A stateless, zero-database task management plugin.",
+  "author": "Gordan Renic",
+  "isDesktopOnly": false
+}
