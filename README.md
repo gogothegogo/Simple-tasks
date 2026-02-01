@@ -38,7 +38,7 @@ Create a code block starting with `simpletasks`. Use the **Save 💾** button in
 | `view:` | `list`, `stats`, `list stats` | Choose to show the list, the stats summary, or both. |
 | `status:` | `undone`, `done`, `all` | Filter by completion status. |
 | `sort:` | `date`, `file` | Sort order (Default: `date`). |
-| `exclude-tags:` | `#tag1 #tag2` | Hide tasks containing specific tags (space separated). |
+| `exclude-tags:` | `#tag1, #tag2` | Hide tasks containing specific tags (comma separated). |
 | `exclude-folders:`| `Folder1, Folder2` | Hide tasks from specific folders (comma separated). |
 | `expanded:` | `true`, `false` | Whether the filter header is expanded by default. |
 

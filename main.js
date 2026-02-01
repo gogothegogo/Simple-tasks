@@ -15,12 +15,9 @@ class TaskScanner {
         
         const globalExcludeFolders = globalSettings.excludedFolders || [];
         const globalExcludeTags = globalSettings.excludedTags || [];
-        const localExcludeFolders = state.excludedFolders || [];
-        const localExcludeTags = state.excludedTags || [];
 
         for (const file of files) {
             if (globalExcludeFolders.some(f => this.isPathInFolder(file.path, f))) continue;
-            if (localExcludeFolders.some(f => this.isPathInFolder(file.path, f))) continue;
 
             const cache = this.app.metadataCache.getFileCache(file);
             if (!cache || !cache.listItems) continue;
@@ -29,7 +26,7 @@ class TaskScanner {
             if (taskItems.length === 0) continue;
 
             const fileTags = this.getAllTagsFromCache(cache);
-            if (this.shouldExcludeByTags(fileTags, globalExcludeTags, localExcludeTags)) continue;
+            if (this.shouldExcludeByTags(fileTags, globalExcludeTags, [])) continue;
 
             const content = await this.app.vault.cachedRead(file);
             const lines = content.split('\n');
@@ -58,13 +55,13 @@ class TaskScanner {
                     const lastDate = dates ? dates[dates.length - 1] : null;
                     
                     // Extract task-level tags
-                    const tags = [];
+                    const taskTags = [];
                     const tagRegex = /#[\w\/-]+/g;
                     while ((match = tagRegex.exec(text)) !== null) {
-                        tags.push(match[0]);
+                        taskTags.push(match[0]);
                     }
 
-                    if (this.shouldExcludeByTags(tags, globalExcludeTags, localExcludeTags)) continue;
+                    if (this.shouldExcludeByTags(taskTags, globalExcludeTags, [])) continue;
 
                     tasks.push({
                         file,
@@ -73,7 +70,7 @@ class TaskScanner {
                         text,
                         categories,
                         date: lastDate,
-                        tags
+                        tags: [...new Set([...fileTags, ...taskTags])]
                     });
                 }
             }
@@ -276,7 +273,7 @@ class SimpleTasksView extends MarkdownRenderChild {
             else if (l.startsWith('status:')) config.status = l.replace('status:', '').trim();
             else if (l.startsWith('sort:')) config.sort = l.replace('sort:', '').trim();
             else if (l.startsWith('search:')) config.search = l.replace('search:', '').trim();
-            else if (l.startsWith('exclude-tags:')) config.excludedTags = l.replace('exclude-tags:', '').split(' ').map(t => t.trim()).filter(t => t);
+            else if (l.startsWith('exclude-tags:')) config.excludedTags = l.replace('exclude-tags:', '').split(',').map(t => t.trim()).filter(t => t);
             else if (l.startsWith('exclude-folders:')) config.excludedFolders = l.replace('exclude-folders:', '').split(',').map(f => f.trim()).filter(f => f);
             else if (l.startsWith('expanded:')) config.expanded = l.replace('expanded:', '').trim() === 'true';
             else if (l.startsWith('from:')) { config.specificFrom = l.replace('from:', '').trim(); config.dateRangeMode = 'specific'; }
@@ -336,14 +333,13 @@ class SimpleTasksView extends MarkdownRenderChild {
         const searchInput = row1.createEl('input', { type: 'text', placeholder: 'Search...', cls: 'simple-tasks-input-long' });
         searchInput.value = this.state.searchTerm; searchInput.oninput = (e) => { this.state.searchTerm = e.target.value; this.renderList(); };
 
-        const exTags = row1.createEl('input', { type: 'text', placeholder: 'Exclude tags...', cls: 'simple-tasks-input-long' });
-        exTags.value = this.state.excludedTags.join(' ');
-        exTags.oninput = (e) => { 
-            this.state.excludedTags = e.target.value.split(/\s+/).map(t => t.trim()).filter(t => t); 
-            this.renderList(); 
-        };
-        
-        const exFolders = row1.createEl('input', { type: 'text', placeholder: 'Exclude folders...', cls: 'simple-tasks-input-long' });
+                const exTags = row1.createEl('input', { type: 'text', placeholder: 'Exclude tags...', cls: 'simple-tasks-input-long' });
+                exTags.value = this.state.excludedTags.join(', ');
+                exTags.oninput = (e) => { 
+                    this.state.excludedTags = e.target.value.split(',').map(t => t.trim()).filter(t => t);     
+                    this.renderList(); 
+                };
+                const exFolders = row1.createEl('input', { type: 'text', placeholder: 'Exclude folders...', cls: 'simple-tasks-input-long' });
         exFolders.value = this.state.excludedFolders.join(', '); 
         exFolders.oninput = (e) => { 
             this.state.excludedFolders = e.target.value.split(',').map(f => f.trim()).filter(f => f); 
@@ -408,7 +404,7 @@ class SimpleTasksView extends MarkdownRenderChild {
         if (this.state.statusFilter !== 'all') newLines.push(`status: ${this.state.statusFilter}`);
         if (this.state.sortBy !== 'date') newLines.push(`sort: ${this.state.sortBy}`);
         if (this.state.searchTerm) newLines.push(`search: ${this.state.searchTerm}`);
-        if (this.state.excludedTags.length > 0) newLines.push(`exclude-tags: ${this.state.excludedTags.join(' ')}`);
+        if (this.state.excludedTags.length > 0) newLines.push(`exclude-tags: ${this.state.excludedTags.join(', ')}`);
         if (this.state.excludedFolders.length > 0) newLines.push(`exclude-folders: ${this.state.excludedFolders.join(', ')}`);
         newLines.push(`expanded: ${this.state.filtersExpanded}`);
         if (this.state.dateRangeMode === 'relative') newLines.push(`date: ${this.state.relDirection} ${this.state.relNumber} ${this.state.relUnit}`);
