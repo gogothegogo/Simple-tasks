@@ -13,11 +13,16 @@ class TaskScanner {
         const tasks = [];
         const categoriesSet = new Set();
         
-        const globalExcludeFolders = globalSettings.excludedFolders || [];
-        const globalExcludeTags = globalSettings.excludedTags || [];
+        const globalExcludeFolders = (globalSettings.excludedFolders || []).map(f => f.trim().replace(/,$/, '')).filter(f => f);
+        const globalExcludeTags = (globalSettings.excludedTags || []).map(t => t.trim().replace(/,$/, '')).filter(t => t);
+
+        const localTags = state.excludedTags || [];
+        const localFolders = state.excludedFolders || [];
+        const hasLocalFilters = localTags.length > 0 || localFolders.length > 0;
 
         for (const file of files) {
-            if (globalExcludeFolders.some(f => this.isPathInFolder(file.path, f))) continue;
+            // Apply global folder exclusions ONLY if not overridden by local filters
+            if (!hasLocalFilters && globalExcludeFolders.some(f => this.isPathInFolder(file.path, f))) continue;
 
             const cache = this.app.metadataCache.getFileCache(file);
             if (!cache || !cache.listItems) continue;
@@ -26,7 +31,8 @@ class TaskScanner {
             if (taskItems.length === 0) continue;
 
             const fileTags = this.getAllTagsFromCache(cache);
-            if (this.shouldExcludeByTags(fileTags, globalExcludeTags, [])) continue;
+            // Apply global tag exclusions ONLY if not overridden by local filters
+            if (!hasLocalFilters && this.shouldExcludeByTags(fileTags, globalExcludeTags, [])) continue;
 
             const content = await this.app.vault.cachedRead(file);
             const lines = content.split('\n');
@@ -61,7 +67,9 @@ class TaskScanner {
                         taskTags.push(match[0]);
                     }
 
-                    if (this.shouldExcludeByTags(taskTags, globalExcludeTags, [])) continue;
+                    const allTaskTags = [...new Set([...fileTags, ...taskTags])];
+                    // Apply global tag exclusions ONLY if not overridden by local filters
+                    if (!hasLocalFilters && this.shouldExcludeByTags(allTaskTags, globalExcludeTags, [])) continue;
 
                     tasks.push({
                         file,
@@ -70,7 +78,7 @@ class TaskScanner {
                         text,
                         categories,
                         date: lastDate,
-                        tags: [...new Set([...fileTags, ...taskTags])]
+                        tags: allTaskTags
                     });
                 }
             }
@@ -179,12 +187,18 @@ class FolderSuggest extends AbstractInputSuggest {
     }
     renderSuggestion(value, el) { el.setText(value); }
     selectSuggestion(value) {
-        const currentVal = this.inputEl.value;
-        const parts = currentVal.split(',').map(p => p.trim());
-        parts.pop(); // Remove the partial query
-        parts.push(value);
-        this.inputEl.value = parts.join(', ') + ', ';
-        this.inputEl.dispatchEvent(new Event('input'));
+        const isSettingTab = this.inputEl.placeholder === 'Search folders...';
+        if (isSettingTab) {
+            this.inputEl.value = value;
+            this.inputEl.dispatchEvent(new Event('input'));
+        } else {
+            const currentVal = this.inputEl.value;
+            const parts = currentVal.split(',').map(p => p.trim());
+            parts.pop(); // Remove the partial query
+            parts.push(value);
+            this.inputEl.value = parts.join(', ') + ', ';
+            this.inputEl.dispatchEvent(new Event('input'));
+        }
         this.close();
     }
 }
@@ -273,7 +287,9 @@ class SimpleTasksView extends MarkdownRenderChild {
             else if (l.startsWith('status:')) config.status = l.replace('status:', '').trim();
             else if (l.startsWith('sort:')) config.sort = l.replace('sort:', '').trim();
             else if (l.startsWith('search:')) config.search = l.replace('search:', '').trim();
+            else if (l.startsWith('tags:')) config.excludedTags = l.replace('tags:', '').split(',').map(t => t.trim()).filter(t => t);
             else if (l.startsWith('exclude-tags:')) config.excludedTags = l.replace('exclude-tags:', '').split(',').map(t => t.trim()).filter(t => t);
+            else if (l.startsWith('folders:')) config.excludedFolders = l.replace('folders:', '').split(',').map(f => f.trim()).filter(f => f);
             else if (l.startsWith('exclude-folders:')) config.excludedFolders = l.replace('exclude-folders:', '').split(',').map(f => f.trim()).filter(f => f);
             else if (l.startsWith('expanded:')) config.expanded = l.replace('expanded:', '').trim() === 'true';
             else if (l.startsWith('from:')) { config.specificFrom = l.replace('from:', '').trim(); config.dateRangeMode = 'specific'; }
@@ -333,13 +349,14 @@ class SimpleTasksView extends MarkdownRenderChild {
         const searchInput = row1.createEl('input', { type: 'text', placeholder: 'Search...', cls: 'simple-tasks-input-long' });
         searchInput.value = this.state.searchTerm; searchInput.oninput = (e) => { this.state.searchTerm = e.target.value; this.renderList(); };
 
-                const exTags = row1.createEl('input', { type: 'text', placeholder: 'Exclude tags...', cls: 'simple-tasks-input-long' });
-                exTags.value = this.state.excludedTags.join(', ');
-                exTags.oninput = (e) => { 
-                    this.state.excludedTags = e.target.value.split(',').map(t => t.trim()).filter(t => t);     
-                    this.renderList(); 
-                };
-                const exFolders = row1.createEl('input', { type: 'text', placeholder: 'Exclude folders...', cls: 'simple-tasks-input-long' });
+        const exTags = row1.createEl('input', { type: 'text', placeholder: 'Tags...', cls: 'simple-tasks-input-long' });
+        exTags.value = this.state.excludedTags.join(', ');
+        exTags.oninput = (e) => { 
+            this.state.excludedTags = e.target.value.split(',').map(t => t.trim()).filter(t => t);     
+            this.renderList(); 
+        };
+        
+        const exFolders = row1.createEl('input', { type: 'text', placeholder: 'Folders...', cls: 'simple-tasks-input-long' });
         exFolders.value = this.state.excludedFolders.join(', '); 
         exFolders.oninput = (e) => { 
             this.state.excludedFolders = e.target.value.split(',').map(f => f.trim()).filter(f => f); 
@@ -404,8 +421,8 @@ class SimpleTasksView extends MarkdownRenderChild {
         if (this.state.statusFilter !== 'all') newLines.push(`status: ${this.state.statusFilter}`);
         if (this.state.sortBy !== 'date') newLines.push(`sort: ${this.state.sortBy}`);
         if (this.state.searchTerm) newLines.push(`search: ${this.state.searchTerm}`);
-        if (this.state.excludedTags.length > 0) newLines.push(`exclude-tags: ${this.state.excludedTags.join(', ')}`);
-        if (this.state.excludedFolders.length > 0) newLines.push(`exclude-folders: ${this.state.excludedFolders.join(', ')}`);
+        if (this.state.excludedTags.length > 0) newLines.push(`tags: ${this.state.excludedTags.join(', ')}`);
+        if (this.state.excludedFolders.length > 0) newLines.push(`folders: ${this.state.excludedFolders.join(', ')}`);
         newLines.push(`expanded: ${this.state.filtersExpanded}`);
         if (this.state.dateRangeMode === 'relative') newLines.push(`date: ${this.state.relDirection} ${this.state.relNumber} ${this.state.relUnit}`);
         else if (this.state.dateRangeMode === 'specific') { if (this.state.specificFrom) newLines.push(`from: ${this.state.specificFrom}`); if (this.state.specificTo) newLines.push(`to: ${this.state.specificTo}`); }
@@ -422,20 +439,44 @@ class SimpleTasksView extends MarkdownRenderChild {
     renderList() {
         if (!this.listContainer) return; this.listContainer.empty();
         if (this.state.loading) { this.listContainer.createDiv({ text: 'Scanning...' }); return; }
+        
+        const localTags = this.state.excludedTags || [];
+        const localFolders = this.state.excludedFolders || [];
+        const hasLocalFilters = localTags.length > 0 || localFolders.length > 0;
+        
+        const globalExcludeFolders = this.globalSettings.excludedFolders || [];
+        const globalExcludeTags = this.globalSettings.excludedTags || [];
+
         let filtered = this.state.tasks.filter(t => {
             if (this.state.statusFilter === 'done' && !t.status) return false;
             if (this.state.statusFilter === 'undone' && t.status) return false;
 
-            // Instant local filters
-            if (this.state.excludedTags.length > 0) {
-                const tags = t.tags || [];
-                if (this.state.excludedTags.some(ex => {
+            const matchesLocalTags = localTags.length > 0 && t.tags.some(tag => 
+                localTags.some(ex => {
                     const nEx = ex.startsWith('#') ? ex : '#' + ex;
-                    return tags.some(tag => tag === nEx || tag.startsWith(nEx + '/'));
-                })) return false;
-            }
-            if (this.state.excludedFolders.length > 0) {
-                if (this.state.excludedFolders.some(f => t.file.path.toLowerCase().startsWith(f.toLowerCase() + '/') || t.file.path.toLowerCase() === f.toLowerCase())) return false;
+                    return tag === nEx || tag.startsWith(nEx + '/');
+                })
+            );
+            
+            const matchesLocalFolders = localFolders.length > 0 && localFolders.some(f => 
+                t.file.path.toLowerCase().startsWith(f.toLowerCase() + '/') || t.file.path.toLowerCase() === f.toLowerCase()
+            );
+
+            const matchesGlobalTags = globalExcludeTags.some(ex => {
+                const nEx = ex.startsWith('#') ? ex : '#' + ex;
+                return t.tags.some(tag => tag === nEx || tag.startsWith(nEx + '/'));
+            });
+
+            const matchesGlobalFolders = globalExcludeFolders.some(f => 
+                t.file.path.toLowerCase().startsWith(f.toLowerCase() + '/') || t.file.path.toLowerCase() === f.toLowerCase()
+            );
+
+            if (hasLocalFilters) {
+                // Inclusion mode: must match local OR folder. Local wins over global.
+                if (!(matchesLocalTags || matchesLocalFolders)) return false;
+            } else {
+                // Exclusion mode: check global settings
+                if (matchesGlobalTags || matchesGlobalFolders) return false;
             }
 
             if (this.state.filterCategories.size > 0 && !t.categories.some(c => this.state.filterCategories.has(c.toLowerCase()))) return false;

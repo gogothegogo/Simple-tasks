@@ -1,4 +1,6 @@
 {
   "excludedFolders": [],
-  "excludedTags": []
+  "excludedTags": [
+    "tag_filter/123"
+  ]
 }
