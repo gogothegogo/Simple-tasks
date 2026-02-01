@@ -196,17 +196,19 @@
 }
 .simple-tasks-date-text.is-interactive:hover {
     color: var(--text-accent);
+    background-color: var(--background-modifier-hover);
+    border-radius: 2px;
 }
 
 .simple-tasks-hidden-picker {
     position: fixed;
     opacity: 0;
-    pointer-events: auto; /* Needs to be auto to be clickable if fallback to click() */
-    z-index: 10000;
-    width: 0;
-    height: 0;
+    pointer-events: auto;
+    z-index: 10001;
     border: none;
     padding: 0;
+    margin: 0;
+    background: transparent;
 }
 .simple-tasks-tag-text { color: var(--text-faint); font-size: 0.9em; margin-left: 4px; }
 .simple-tasks-file-hint { color: var(--text-faint); font-size: 0.8em; margin-left: 8px; flex-shrink: 0; }

@@ -495,28 +495,36 @@ class SimpleTasksView extends MarkdownRenderChild {
                                         text: part
                                     });
                                     dateSpan.onclick = (e) => {
+                                        e.preventDefault();
                                         e.stopPropagation();
-                                        const rect = dateSpan.getBoundingClientRect();
+                                        
+                                        // Aggressive cleanup
+                                        document.querySelectorAll('.simple-tasks-hidden-picker').forEach(p => p.remove());
+
                                         const picker = document.createElement('input');
                                         picker.type = 'date';
                                         picker.className = 'simple-tasks-hidden-picker';
                                         
-                                        // Set styles directly to ensure they override everything
+                                        const isDark = document.body.classList.contains('theme-dark');
+                                        // Use direct click coordinates for the anchor
+                                        const x = e.clientX;
+                                        const y = e.clientY;
+
                                         Object.assign(picker.style, {
                                             position: 'fixed',
-                                            left: `${rect.left}px`,
-                                            top: `${rect.top}px`,
-                                            width: `${rect.width}px`,
-                                            height: `${rect.height}px`,
-                                            zIndex: '10000',
-                                            opacity: '0',
+                                            left: x + 'px',
+                                            top: y + 'px',
+                                            width: '20px',
+                                            height: '20px',
+                                            opacity: '0.01',
+                                            zIndex: '10001',
                                             pointerEvents: 'auto',
-                                            colorScheme: document.body.classList.contains('theme-dark') ? 'dark' : 'light'
+                                            colorScheme: isDark ? 'dark' : 'light'
                                         });
                                         
                                         document.body.appendChild(picker);
-                                        
                                         picker.value = part;
+                                        
                                         picker.onchange = async (ev) => {
                                             const newDate = ev.target.value;
                                             if (newDate && newDate !== part) {
@@ -524,13 +532,22 @@ class SimpleTasksView extends MarkdownRenderChild {
                                             }
                                             picker.remove();
                                         };
-                                        picker.onblur = () => picker.remove();
                                         
-                                        if (picker.showPicker) {
-                                            picker.showPicker();
-                                        } else {
-                                            picker.click();
-                                        }
+                                        picker.onblur = () => {
+                                            // Allow some time for the change event to fire before removal
+                                            setTimeout(() => { if(picker.parentNode) picker.remove(); }, 500);
+                                        };
+
+                                        // Use requestAnimationFrame to ensure the browser has laid out the element 
+                                        // before triggering the native picker, which fixes 'top-left' anchoring.
+                                        requestAnimationFrame(() => {
+                                            picker.focus();
+                                            if (picker.showPicker) {
+                                                picker.showPicker();
+                                            } else {
+                                                picker.click();
+                                            }
+                                        });
                                     };
                                 } else {
                                     // Not the last date, render as normal text
