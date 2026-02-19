@@ -262,6 +262,7 @@ class SimpleTasksView extends MarkdownRenderChild {
             excludedFolders: config.excludedFolders || [],
             searchTerm: config.search || "",
             filterCategories: config.filterCategories || new Set(),
+            categoryFilterMode: config.categoryFilterMode || 'include',
             dateRangeMode: config.dateRangeMode || 'all',
             relDirection: config.relDirection || 'next', relNumber: config.relNumber || 1, relUnit: config.relUnit || 'weeks',
             specificFrom: config.specificFrom || "", specificTo: config.specificTo || "",
@@ -280,12 +281,13 @@ class SimpleTasksView extends MarkdownRenderChild {
     onunload() { if (this.refreshTimer) clearTimeout(this.refreshTimer); }
     async refresh() { await this.scanVault(); this.renderHeader(); this.renderList(); }
     parseConfig(source) {
-        const config = { filterCategories: new Set(), status: 'all', excludedTags: [], excludedFolders: [], sort: 'date', title: null, showList: true, showStats: false, search: "", dateRangeMode: 'all' };
+        const config = { filterCategories: new Set(), categoryFilterMode: 'include', status: 'all', excludedTags: [], excludedFolders: [], sort: 'date', title: null, showList: true, showStats: false, search: "", dateRangeMode: 'all' };
         source.split('\n').forEach(line => {
             const l = line.trim();
             if (l.startsWith('title:')) config.title = l.replace('title:', '').trim();
             else if (l.startsWith('view:')) { const v = l.replace('view:', '').trim(); config.showList = v.includes('list'); config.showStats = v.includes('stats'); }
             else if (l.startsWith('status:')) config.status = l.replace('status:', '').trim();
+            else if (l.startsWith('cat-mode:')) config.categoryFilterMode = l.replace('cat-mode:', '').trim();
             else if (l.startsWith('sort:')) config.sort = l.replace('sort:', '').trim();
             else if (l.startsWith('search:')) config.search = l.replace('search:', '').trim();
             else if (l.startsWith('tags:')) config.excludedTags = l.replace('tags:', '').split(',').map(t => t.trim()).filter(t => t);
@@ -405,11 +407,25 @@ class SimpleTasksView extends MarkdownRenderChild {
     }
     renderCategoryBar() {
         if (!this.categoryBar) return; this.categoryBar.empty();
+
+        const modeBtn = this.categoryBar.createEl('div', { 
+            text: this.state.categoryFilterMode === 'include' ? 'IS' : 'NOT', 
+            cls: `simple-tasks-chip simple-tasks-mode-toggle ${this.state.categoryFilterMode === 'exclude' ? 'is-exclude' : ''}`,
+            title: 'Toggle between Include and Exclude mode'
+        });
+        modeBtn.onclick = () => {
+            this.state.categoryFilterMode = this.state.categoryFilterMode === 'include' ? 'exclude' : 'include';
+            this.renderCategoryBar();
+            this.renderList();
+        };
+
         const clearBtn = this.categoryBar.createEl('div', { text: 'ALL', cls: 'simple-tasks-chip' });
         clearBtn.onclick = () => { this.state.filterCategories.clear(); this.renderCategoryBar(); this.renderList(); };
+        
         Array.from(this.state.availableCategories).sort().forEach(cat => {
             const isActive = this.state.filterCategories.has(cat.toLowerCase());
-            const chip = this.categoryBar.createEl('div', { text: cat.toUpperCase(), cls: `simple-tasks-chip ${isActive ? 'is-active' : ''}` });
+            const chipCls = `simple-tasks-chip ${isActive ? 'is-active' : ''} ${isActive && this.state.categoryFilterMode === 'exclude' ? 'is-destructive' : ''}`;
+            const chip = this.categoryBar.createEl('div', { text: cat.toUpperCase(), cls: chipCls });
             chip.onclick = () => { if (isActive) this.state.filterCategories.delete(cat.toLowerCase()); else this.state.filterCategories.add(cat.toLowerCase()); this.renderCategoryBar(); this.renderList(); };
         });
     }
@@ -420,6 +436,7 @@ class SimpleTasksView extends MarkdownRenderChild {
         const views = []; if (this.state.showList) views.push('list'); if (this.state.showStats) views.push('stats');
         newLines.push(`view: ${views.join(' ')}`);
         if (this.state.statusFilter !== 'all') newLines.push(`status: ${this.state.statusFilter}`);
+        if (this.state.categoryFilterMode !== 'include') newLines.push(`cat-mode: ${this.state.categoryFilterMode}`);
         if (this.state.sortBy !== 'date') newLines.push(`sort: ${this.state.sortBy}`);
         if (this.state.searchTerm) newLines.push(`search: ${this.state.searchTerm}`);
         if (this.state.excludedTags.length > 0) newLines.push(`tags: ${this.state.excludedTags.join(', ')}`);
@@ -480,7 +497,15 @@ class SimpleTasksView extends MarkdownRenderChild {
                 if (matchesGlobalTags || matchesGlobalFolders) return false;
             }
 
-            if (this.state.filterCategories.size > 0 && !t.categories.some(c => this.state.filterCategories.has(c.toLowerCase()))) return false;
+            if (this.state.filterCategories.size > 0) {
+                const hasSelectedCat = t.categories.some(c => this.state.filterCategories.has(c.toLowerCase()));
+                if (this.state.categoryFilterMode === 'include') {
+                    if (!hasSelectedCat) return false;
+                } else {
+                    if (hasSelectedCat) return false;
+                }
+            }
+
             if (this.state.dateRangeMode === 'relative') {
                 const start = moment().startOf('day'); const end = moment().startOf('day');
                 if (this.state.relDirection === 'next') end.add(this.state.relNumber, this.state.relUnit); else start.subtract(this.state.relNumber, this.state.relUnit);
