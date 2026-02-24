@@ -352,14 +352,14 @@ class SimpleTasksView extends MarkdownRenderChild {
         const searchInput = row1.createEl('input', { type: 'text', placeholder: 'Search...', cls: 'simple-tasks-input-long' });
         searchInput.value = this.state.searchTerm; searchInput.oninput = (e) => { this.state.searchTerm = e.target.value; this.renderList(); };
 
-        const exTags = row1.createEl('input', { type: 'text', placeholder: 'Tags...', cls: 'simple-tasks-input-long' });
+        const exTags = row1.createEl('input', { type: 'text', placeholder: 'Exclude tasks...', cls: 'simple-tasks-input-long' });
         exTags.value = this.state.excludedTags.join(', ');
         exTags.oninput = (e) => { 
             this.state.excludedTags = e.target.value.split(',').map(t => t.trim()).filter(t => t);     
             this.renderList(); 
         };
         
-        const exFolders = row1.createEl('input', { type: 'text', placeholder: 'Folders...', cls: 'simple-tasks-input-long' });
+        const exFolders = row1.createEl('input', { type: 'text', placeholder: 'Exclude folders...', cls: 'simple-tasks-input-long' });
         exFolders.value = this.state.excludedFolders.join(', '); 
         exFolders.oninput = (e) => { 
             this.state.excludedFolders = e.target.value.split(',').map(f => f.trim()).filter(f => f); 
@@ -465,10 +465,7 @@ class SimpleTasksView extends MarkdownRenderChild {
         const globalExcludeFolders = this.globalSettings.excludedFolders || [];
         const globalExcludeTags = this.globalSettings.excludedTags || [];
 
-        let filtered = this.state.tasks.filter(t => {
-            if (this.state.statusFilter === 'done' && !t.status) return false;
-            if (this.state.statusFilter === 'undone' && t.status) return false;
-
+        let statsScopedTasks = this.state.tasks.filter(t => {
             const matchesLocalTags = localTags.length > 0 && t.tags.some(tag => 
                 localTags.some(ex => {
                     const nEx = ex.startsWith('#') ? ex : '#' + ex;
@@ -490,10 +487,8 @@ class SimpleTasksView extends MarkdownRenderChild {
             );
 
             if (hasLocalFilters) {
-                // Inclusion mode: must match local OR folder. Local wins over global.
                 if (!(matchesLocalTags || matchesLocalFolders)) return false;
             } else {
-                // Exclusion mode: check global settings
                 if (matchesGlobalTags || matchesGlobalFolders) return false;
             }
 
@@ -517,7 +512,14 @@ class SimpleTasksView extends MarkdownRenderChild {
             if (this.state.searchTerm && !t.text.toLowerCase().includes(this.state.searchTerm.toLowerCase())) return false;
             return true;
         });
-        if (this.state.showStats) this.renderStats(filtered);
+
+        let filtered = statsScopedTasks.filter(t => {
+            if (this.state.statusFilter === 'done' && !t.status) return false;
+            if (this.state.statusFilter === 'undone' && t.status) return false;
+            return true;
+        });
+
+        if (this.state.showStats) this.renderStats(statsScopedTasks);
         if (!this.state.showList) return;
         filtered.sort((a, b) => {
             if (this.state.sortBy === 'date') { if (!a.date && !b.date) return 0; if (!a.date) return 1; if (!b.date) return -1; return a.date.localeCompare(b.date); }
@@ -650,12 +652,23 @@ class SimpleTasksView extends MarkdownRenderChild {
 
     renderStats(tasks) {
         const stats = {};
-        tasks.forEach(t => { const cats = t.categories.length > 0 ? t.categories : ['Uncategorized']; cats.forEach(c => { const lower = c.toLowerCase(); if (!stats[lower]) stats[lower] = { label: c.toUpperCase(), total: 0, done: 0 }; stats[lower].total++; if (t.status) stats[lower].done++; }); });
+        let totalUndone = 0;
+        let totalTasks = tasks.length;
+        tasks.forEach(t => { 
+            if (!t.status) totalUndone++;
+            const cats = t.categories.length > 0 ? t.categories : ['Uncategorized']; 
+            cats.forEach(c => { const lower = c.toLowerCase(); if (!stats[lower]) stats[lower] = { label: c.toUpperCase(), total: 0, undone: 0 }; stats[lower].total++; if (!t.status) stats[lower].undone++; }); 
+        });
         const container = this.listContainer.createDiv('simple-tasks-stats-inline');
+        
+        const mainStat = container.createSpan({ cls: 'simple-tasks-stat-item' });
+        mainStat.createSpan({ text: 'Pending: ', cls: 'simple-tasks-stat-name' });
+        mainStat.createSpan({ text: `${totalUndone}/${totalTasks}`, cls: 'simple-tasks-stat-counts' });
+
         Object.entries(stats).sort((a, b) => a[0].localeCompare(b[0])).forEach(([key, data]) => {
             const stat = container.createSpan({ cls: 'simple-tasks-stat-item' });
             stat.createSpan({ text: data.label, cls: 'simple-tasks-stat-name' });
-            stat.createSpan({ text: ` (${data.done}/${data.total})`, cls: 'simple-tasks-stat-counts' });
+            stat.createSpan({ text: ` (${data.undone}/${data.total})`, cls: 'simple-tasks-stat-counts' });
         });
     }
     async toggleTask(task) {
