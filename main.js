@@ -352,7 +352,7 @@ class SimpleTasksView extends MarkdownRenderChild {
         const searchInput = row1.createEl('input', { type: 'text', placeholder: 'Search...', cls: 'simple-tasks-input-long' });
         searchInput.value = this.state.searchTerm; searchInput.oninput = (e) => { this.state.searchTerm = e.target.value; this.renderList(); };
 
-        const exTags = row1.createEl('input', { type: 'text', placeholder: 'Exclude tasks...', cls: 'simple-tasks-input-long' });
+        const exTags = row1.createEl('input', { type: 'text', placeholder: 'Exclude tags...', cls: 'simple-tasks-input-long' });
         exTags.value = this.state.excludedTags.join(', ');
         exTags.oninput = (e) => { 
             this.state.excludedTags = e.target.value.split(',').map(t => t.trim()).filter(t => t);     
