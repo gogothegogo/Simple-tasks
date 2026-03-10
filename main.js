@@ -373,7 +373,7 @@ class SimpleTasksView extends MarkdownRenderChild {
         });
         statusSelect.onchange = (e) => { this.state.statusFilter = e.target.value; this.renderList(); };
         const sortSelect = row2.createEl('select');
-        [['date', 'By Date'], ['file', 'By File']].forEach(([v, l]) => {
+        [['date', 'By Date'], ['name', 'By Name']].forEach(([v, l]) => {
             const opt = sortSelect.createEl('option', { value: v, text: l }); if (this.state.sortBy === v) opt.selected = true;
         });
         sortSelect.onchange = (e) => { this.state.sortBy = e.target.value; this.renderList(); };
@@ -521,9 +521,17 @@ class SimpleTasksView extends MarkdownRenderChild {
 
         if (this.state.showStats) this.renderStats(statsScopedTasks);
         if (!this.state.showList) return;
+        const sortKey = (t) => t.replace(/==[^=]+==/g, '').replace(/\s/g, '');
         filtered.sort((a, b) => {
-            if (this.state.sortBy === 'date') { if (!a.date && !b.date) return 0; if (!a.date) return 1; if (!b.date) return -1; return a.date.localeCompare(b.date); }
-            return a.file.path.localeCompare(b.file.path);
+            const cmpName = () => sortKey(a.text).localeCompare(sortKey(b.text), undefined, { sensitivity: 'base' });
+            if (this.state.sortBy === 'date') {
+                if (!a.date && !b.date) return cmpName();
+                if (!a.date) return 1;
+                if (!b.date) return -1;
+                const d = a.date.localeCompare(b.date);
+                return d !== 0 ? d : cmpName();
+            }
+            return cmpName();
         });
         const ul = this.listContainer.createEl('ul', { cls: 'simple-tasks-list' });
         if (filtered.length === 0) { ul.createEl('li', { text: 'No matching tasks.', cls: 'simple-tasks-empty' }); return; }
