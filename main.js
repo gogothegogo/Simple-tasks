@@ -385,14 +385,21 @@ class SimpleTasksView extends MarkdownRenderChild {
 
         if (this.state.dateRangeMode === 'relative') {
             const rel = row2.createDiv('simple-tasks-date-controls');
-            const dir = rel.createEl('select'); [['next', 'Next'], ['last', 'Last']].forEach(([v, l]) => {
+            const dir = rel.createEl('select'); [['next', 'Next'], ['last', 'Last'], ['current', 'Current']].forEach(([v, l]) => {
                 const opt = dir.createEl('option', { value: v, text: l }); if (this.state.relDirection === v) opt.selected = true;
             });
-            dir.onchange = (e) => { this.state.relDirection = e.target.value; this.renderList(); };
-            const num = rel.createEl('input', { type: 'number', value: this.state.relNumber, cls: 'simple-tasks-number-short' });
-            num.oninput = (e) => { this.state.relNumber = parseInt(e.target.value) || 0; this.renderList(); };
-            const unit = rel.createEl('select'); ['days', 'weeks', 'months', 'years'].forEach(u => {
-                const opt = unit.createEl('option', { value: u, text: u }); if (this.state.relUnit === u) opt.selected = true;
+            dir.onchange = (e) => { this.state.relDirection = e.target.value; this.renderHeader(); this.renderList(); };
+            const isCurrent = this.state.relDirection === 'current';
+            if (!isCurrent) {
+                const num = rel.createEl('input', { type: 'number', value: this.state.relNumber, cls: 'simple-tasks-number-short' });
+                num.oninput = (e) => { this.state.relNumber = parseInt(e.target.value) || 0; this.renderList(); };
+            }
+            const unit = rel.createEl('select');
+            const unitOptions = isCurrent
+                ? [['days', 'day'], ['weeks', 'week'], ['months', 'month'], ['years', 'year']]
+                : [['days', 'days'], ['weeks', 'weeks'], ['months', 'months'], ['years', 'years']];
+            unitOptions.forEach(([v, l]) => {
+                const opt = unit.createEl('option', { value: v, text: l }); if (this.state.relUnit === v) opt.selected = true;
             });
             unit.onchange = (e) => { this.state.relUnit = e.target.value; this.renderList(); };
         } else if (this.state.dateRangeMode === 'specific') {
@@ -502,8 +509,16 @@ class SimpleTasksView extends MarkdownRenderChild {
             }
 
             if (this.state.dateRangeMode === 'relative') {
-                const start = moment().startOf('day'); const end = moment().startOf('day');
-                if (this.state.relDirection === 'next') end.add(this.state.relNumber, this.state.relUnit); else start.subtract(this.state.relNumber, this.state.relUnit);
+                let start, end;
+                if (this.state.relDirection === 'current') {
+                    const unitMap = { 'days': 'day', 'weeks': 'isoWeek', 'months': 'month', 'years': 'year' };
+                    const u = unitMap[this.state.relUnit] || 'day';
+                    start = moment().startOf(u); end = moment().endOf(u);
+                } else {
+                    start = moment().startOf('day'); end = moment().startOf('day');
+                    if (this.state.relDirection === 'next') end.add(this.state.relNumber, this.state.relUnit);
+                    else start.subtract(this.state.relNumber, this.state.relUnit);
+                }
                 if (!t.date || t.date < start.format('YYYY-MM-DD') || t.date > end.format('YYYY-MM-DD')) return false;
             } else if (this.state.dateRangeMode === 'specific') {
                 if (this.state.specificFrom && (!t.date || t.date < this.state.specificFrom)) return false;
