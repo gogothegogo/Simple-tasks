@@ -2,6 +2,11 @@
 
 const { Plugin, PluginSettingTab, Setting, MarkdownRenderChild, AbstractInputSuggest, EditorSuggest, moment, MarkdownView, Notice } = require('obsidian');
 
+// Kanban grouping options: [codeblock value, dropdown label]
+const KANBAN_GROUPS = [['category', 'By Category'], ['status', 'By Status'], ['day', 'By Day'], ['week', 'By Week'], ['month', 'By Month']];
+const NO_CATEGORY = 'NO CATEGORY';
+const NO_DATE = 'NO DATE';
+
 class TaskScanner {
     constructor(app, plugin) {
         this.app = app;
@@ -42,7 +47,7 @@ class TaskScanner {
                 const line = lines[i];
                 if (!line) continue;
 
-                const taskMatch = line.match(/^(\s*[-*]\s*)\[([ xX])\]\s*(.*)$/);
+                const taskMatch = line.match(/^(\s*[-*]\s*)\[([ xX\/])\]\s*(.*)$/);
                 if (taskMatch) {
                     const text = taskMatch[3];
                     // Extract categories
@@ -75,6 +80,8 @@ class TaskScanner {
                     tasks.push({
                         file,
                         line: i,
+                        // mark: ' ' open, 'x' done, '/' in progress. In progress counts as not done.
+                        mark: taskMatch[2].toLowerCase(),
                         status: taskMatch[2].toLowerCase() === 'x',
                         text,
                         categories,
@@ -161,7 +168,7 @@ class CategorySuggest extends EditorSuggest {
         const match = line.substring(start.ch).match(/^\[([ xX]?)\]/);
         let status = (match && match[1]) ? match[1] : " ";
         if (status.trim() === "") status = " ";
-        const isAlreadyTask = /^(\s*)[-*]\s*\[([ xX])\]/.test(line);
+        const isAlreadyTask = /^(\s*)[-*]\s*\[([ xX\/])\]/.test(line);
         if (isAlreadyTask) {
             editor.replaceRange(`==${suggestion.value}== `, start, end);
         } else {
@@ -267,7 +274,10 @@ class SimpleTasksView extends MarkdownRenderChild {
             relDirection: config.relDirection || 'next', relNumber: config.relNumber || 1, relUnit: config.relUnit || 'weeks',
             specificFrom: config.specificFrom || "", specificTo: config.specificTo || "",
             tasks: [], availableCategories: new Set(), loading: true,
-            filtersExpanded: config.expanded !== undefined ? config.expanded : true
+            filtersExpanded: config.expanded !== undefined ? config.expanded : true,
+            wrapText: config.wrap !== undefined ? config.wrap : true,
+            kanban: config.kanban || false,
+            groupBy: config.group || 'category'
         };
         this.refreshTimer = null;
     }
@@ -295,6 +305,9 @@ class SimpleTasksView extends MarkdownRenderChild {
             else if (l.startsWith('folders:')) config.excludedFolders = l.replace('folders:', '').split(',').map(f => f.trim()).filter(f => f);
             else if (l.startsWith('exclude-folders:')) config.excludedFolders = l.replace('exclude-folders:', '').split(',').map(f => f.trim()).filter(f => f);
             else if (l.startsWith('expanded:')) config.expanded = l.replace('expanded:', '').trim() === 'true';
+            else if (l.startsWith('wrap:')) config.wrap = l.replace('wrap:', '').trim() !== 'false';
+            else if (l.startsWith('kanban:')) config.kanban = l.replace('kanban:', '').trim() === 'true';
+            else if (l.startsWith('group:')) { const g = l.replace('group:', '').trim(); if (KANBAN_GROUPS.some(([v]) => v === g)) config.group = g; }
             else if (l.startsWith('from:')) { config.specificFrom = l.replace('from:', '').trim(); config.dateRangeMode = 'specific'; }
             else if (l.startsWith('to:')) { config.specificTo = l.replace('to:', '').trim(); config.dateRangeMode = 'specific'; }
             else if (l.startsWith('date:')) {
@@ -323,6 +336,7 @@ class SimpleTasksView extends MarkdownRenderChild {
             };
         };
         renderTitle();
+        this.containerEl.toggleClass('simple-tasks-nowrap', !this.state.wrapText);
         const actionsContainer = topRow.createDiv('simple-tasks-actions');
 
         const listLabel = actionsContainer.createEl('label', { cls: 'simple-tasks-checkbox-label' });
@@ -362,9 +376,26 @@ class SimpleTasksView extends MarkdownRenderChild {
         const exFolders = row1.createEl('input', { type: 'text', placeholder: 'Exclude folders...', cls: 'simple-tasks-input-long' });
         exFolders.value = this.state.excludedFolders.join(', '); 
         exFolders.oninput = (e) => { 
-            this.state.excludedFolders = e.target.value.split(',').map(f => f.trim()).filter(f => f); 
-            this.renderList(); 
+            this.state.excludedFolders = e.target.value.split(',').map(f => f.trim()).filter(f => f);
+            this.renderList();
         };
+
+        const wrapLabel = row1.createEl('label', { cls: 'simple-tasks-checkbox-label simple-tasks-compact', title: 'Wrap long tasks, or cut them to one line' });
+        const wrapCb = wrapLabel.createEl('input', { type: 'checkbox' }); wrapCb.checked = this.state.wrapText;
+        wrapLabel.appendText(' Wrap');
+        wrapCb.onchange = (e) => { this.state.wrapText = e.target.checked; this.containerEl.toggleClass('simple-tasks-nowrap', !this.state.wrapText); };
+
+        const kanbanLabel = row1.createEl('label', { cls: 'simple-tasks-checkbox-label simple-tasks-compact', title: 'Show tasks as a kanban board instead of a list' });
+        const kanbanCb = kanbanLabel.createEl('input', { type: 'checkbox' }); kanbanCb.checked = this.state.kanban;
+        kanbanLabel.appendText(' Kanban');
+        kanbanCb.onchange = (e) => { this.state.kanban = e.target.checked; this.renderHeader(); this.renderList(); };
+        if (this.state.kanban) {
+            const groupSelect = row1.createEl('select', { cls: 'simple-tasks-compact', title: 'Group kanban columns by' });
+            KANBAN_GROUPS.forEach(([v, l]) => {
+                const opt = groupSelect.createEl('option', { value: v, text: l }); if (this.state.groupBy === v) opt.selected = true;
+            });
+            groupSelect.onchange = (e) => { this.state.groupBy = e.target.value; this.renderList(); };
+        }
 
         const row2 = this.filterWrapper.createDiv('simple-tasks-header-row');
         const statusSelect = row2.createEl('select');
@@ -449,6 +480,8 @@ class SimpleTasksView extends MarkdownRenderChild {
         if (this.state.excludedTags.length > 0) newLines.push(`tags: ${this.state.excludedTags.join(', ')}`);
         if (this.state.excludedFolders.length > 0) newLines.push(`folders: ${this.state.excludedFolders.join(', ')}`);
         newLines.push(`expanded: ${this.state.filtersExpanded}`);
+        if (!this.state.wrapText) newLines.push('wrap: false');
+        if (this.state.kanban) { newLines.push('kanban: true'); newLines.push(`group: ${this.state.groupBy}`); }
         if (this.state.dateRangeMode === 'relative') newLines.push(`date: ${this.state.relDirection} ${this.state.relNumber} ${this.state.relUnit}`);
         else if (this.state.dateRangeMode === 'specific') { if (this.state.specificFrom) newLines.push(`from: ${this.state.specificFrom}`); if (this.state.specificTo) newLines.push(`to: ${this.state.specificTo}`); }
         this.state.filterCategories.forEach(cat => newLines.push(`==${cat}==`));
@@ -471,6 +504,7 @@ class SimpleTasksView extends MarkdownRenderChild {
         
         const globalExcludeFolders = this.globalSettings.excludedFolders || [];
         const globalExcludeTags = this.globalSettings.excludedTags || [];
+        const dateRange = this.getDateRange();
 
         let statsScopedTasks = this.state.tasks.filter(t => {
             const matchesLocalTags = localTags.length > 0 && t.tags.some(tag => 
@@ -508,21 +542,9 @@ class SimpleTasksView extends MarkdownRenderChild {
                 }
             }
 
-            if (this.state.dateRangeMode === 'relative') {
-                let start, end;
-                if (this.state.relDirection === 'current') {
-                    const unitMap = { 'days': 'day', 'weeks': 'isoWeek', 'months': 'month', 'years': 'year' };
-                    const u = unitMap[this.state.relUnit] || 'day';
-                    start = moment().startOf(u); end = moment().endOf(u);
-                } else {
-                    start = moment().startOf('day'); end = moment().startOf('day');
-                    if (this.state.relDirection === 'next') end.add(this.state.relNumber, this.state.relUnit);
-                    else start.subtract(this.state.relNumber, this.state.relUnit);
-                }
-                if (!t.date || t.date < start.format('YYYY-MM-DD') || t.date > end.format('YYYY-MM-DD')) return false;
-            } else if (this.state.dateRangeMode === 'specific') {
-                if (this.state.specificFrom && (!t.date || t.date < this.state.specificFrom)) return false;
-                if (this.state.specificTo && (!t.date || t.date > this.state.specificTo)) return false;
+            if (dateRange) {
+                if (dateRange.from && (!t.date || t.date < dateRange.from)) return false;
+                if (dateRange.to && (!t.date || t.date > dateRange.to)) return false;
             }
             if (this.state.searchTerm && !t.text.toLowerCase().includes(this.state.searchTerm.toLowerCase())) return false;
             return true;
@@ -537,7 +559,12 @@ class SimpleTasksView extends MarkdownRenderChild {
         if (this.state.showStats) this.renderStats(statsScopedTasks);
         if (!this.state.showList) return;
         const sortKey = (t) => t.replace(/==[^=]+==/g, '').replace(/\s/g, '');
+        // Status groups first: in progress, then open, then done
+        const statusRank = { '/': 0, ' ': 1, 'x': 2 };
         filtered.sort((a, b) => {
+            const rank = (t) => (t.mark in statusRank) ? statusRank[t.mark] : 1;
+            const s = rank(a) - rank(b);
+            if (s !== 0) return s;
             const cmpName = () => sortKey(a.text).localeCompare(sortKey(b.text), undefined, { sensitivity: 'base' });
             if (this.state.sortBy === 'date') {
                 if (!a.date && !b.date) return cmpName();
@@ -548,13 +575,18 @@ class SimpleTasksView extends MarkdownRenderChild {
             }
             return cmpName();
         });
+        if (this.state.kanban) { this.renderKanban(filtered, dateRange, statsScopedTasks); return; }
         const ul = this.listContainer.createEl('ul', { cls: 'simple-tasks-list' });
         if (filtered.length === 0) { ul.createEl('li', { text: 'No matching tasks.', cls: 'simple-tasks-empty' }); return; }
-        filtered.forEach(task => {
-            const li = ul.createEl('li', { cls: 'simple-tasks-item' });
-            const cb = li.createEl('input', { type: 'checkbox', cls: 'simple-tasks-checkbox' }); cb.checked = task.status;
+        filtered.forEach(task => this.renderTaskRow(ul.createEl('li', { cls: 'simple-tasks-item' }), task));
+    }
+
+    // Checkbox, task text and file name of one task. Used by list rows and kanban cards.
+    renderTaskRow(el, task) {
+            // Same markup as Obsidian's own task checkboxes, so themes can draw [/] as half done
+            const cb = el.createEl('input', { type: 'checkbox', cls: 'simple-tasks-checkbox' }); cb.checked = task.mark !== ' '; cb.dataset.task = task.mark;
             cb.onclick = async (e) => { e.stopPropagation(); await this.toggleTask(task); };
-                        const div = li.createDiv('simple-tasks-content');
+                        const div = el.createDiv('simple-tasks-content');
                         // Extract the task text without the checkbox part
                         const taskText = task.text;
                         
@@ -651,11 +683,200 @@ class SimpleTasksView extends MarkdownRenderChild {
                                 div.createSpan({ text: part });
                             }
                         });
-                        li.createSpan({ text: task.file.basename, cls: 'simple-tasks-file-hint' });
+                        const fileHint = el.createSpan({ text: task.file.basename, cls: 'simple-tasks-file-hint' });
+                        // Show the full text on hover, but only when it is cut with an ellipsis
+                        [div, fileHint].forEach(cutEl => cutEl.addEventListener('mouseenter', () => {
+                            const isCut = cutEl.scrollWidth > cutEl.clientWidth || cutEl.scrollHeight > cutEl.clientHeight;
+                            if (isCut) cutEl.setAttribute('title', cutEl.textContent); else cutEl.removeAttribute('title');
+                        }));
                         div.onclick = () => {
                             this.app.workspace.getLeaf().openFile(task.file, { eState: { line: task.line } });
                         };
-                    });
+    }
+
+    // ----- Kanban -----
+
+    // Columns as [{ key, label, tasks, isCurrent }]. Tasks keep the list sort order inside each column.
+    // scopeTasks are the tasks before the status filter: category columns come from them, so a column
+    // does not vanish when its tasks are only hidden by the status filter.
+    buildKanbanColumns(tasks, dateRange, scopeTasks) {
+        const group = this.state.groupBy;
+        const columns = new Map();
+        const addColumn = (key, label, isCurrent) => { if (!columns.has(key)) columns.set(key, { key, label, tasks: [], isCurrent: !!isCurrent }); return columns.get(key); };
+
+        if (group === 'status') {
+            const status = this.state.statusFilter;
+            if (status !== 'done') { addColumn(' ', 'Undone'); addColumn('/', 'In progress'); }
+            if (status !== 'undone') addColumn('x', 'Done');
+            tasks.forEach(t => { if (columns.has(t.mark)) columns.get(t.mark).tasks.push(t); });
+            return Array.from(columns.values());
+        }
+
+        if (group === 'category') {
+            const selected = Array.from(this.state.filterCategories).map(c => c.toUpperCase());
+            if (selected.length > 0 && this.state.categoryFilterMode === 'include') {
+                // Only the selected categories, also when empty, so they work as drop targets
+                selected.sort().forEach(c => addColumn(c, c));
+            } else {
+                addColumn(NO_CATEGORY, NO_CATEGORY);
+                const excluded = this.state.categoryFilterMode === 'exclude' ? selected : [];
+                Array.from(new Set([].concat(...scopeTasks.map(t => t.categories)))).filter(c => !excluded.includes(c)).sort().forEach(c => addColumn(c, c));
+            }
+            tasks.forEach(t => {
+                const cats = t.categories.length > 0 ? t.categories : [NO_CATEGORY];
+                cats.forEach(c => { if (columns.has(c)) columns.get(c).tasks.push(t); });
+            });
+            return Array.from(columns.values());
+        }
+
+        // day, week or month: one column per period, oldest first
+        const keys = new Set(tasks.filter(t => t.date).map(t => this.periodKey(t.date)));
+        keys.add(this.periodKey(moment().format('YYYY-MM-DD')));
+        if (dateRange && dateRange.from && dateRange.to) {
+            // Every period of the date filter, so empty ones can be dropped on (capped for long ranges)
+            const unit = group === 'week' ? 'isoWeek' : group;
+            const cursor = moment(dateRange.from).startOf(unit), last = moment(dateRange.to);
+            for (let i = 0; i < 62 && !cursor.isAfter(last); i++) { keys.add(this.periodKey(cursor.format('YYYY-MM-DD'))); cursor.add(1, group === 'week' ? 'weeks' : group + 's'); }
+        }
+        const currentKey = this.periodKey(moment().format('YYYY-MM-DD'));
+        Array.from(keys).sort().forEach(k => addColumn(k, this.periodLabel(k), k === currentKey));
+        // Undated tasks only exist when no date filter is set
+        if (!dateRange) addColumn(NO_DATE, NO_DATE);
+        tasks.forEach(t => { const k = t.date ? this.periodKey(t.date) : NO_DATE; if (columns.has(k)) columns.get(k).tasks.push(t); });
+        return Array.from(columns.values());
+    }
+
+    // Column key of a date: the day itself, the Monday of its ISO week, or YYYY-MM
+    periodKey(date) {
+        const m = moment(date, 'YYYY-MM-DD');
+        if (this.state.groupBy === 'week') return m.startOf('isoWeek').format('YYYY-MM-DD');
+        if (this.state.groupBy === 'month') return m.format('YYYY-MM');
+        return m.format('YYYY-MM-DD');
+    }
+
+    periodLabel(key) {
+        if (this.state.groupBy === 'week') {
+            const m = moment(key, 'YYYY-MM-DD');
+            return `W${m.isoWeek()} · ${m.format('D MMM')} – ${m.clone().add(6, 'days').format('D MMM YYYY')}`;
+        }
+        if (this.state.groupBy === 'month') return moment(key, 'YYYY-MM').format('MMMM YYYY');
+        return moment(key, 'YYYY-MM-DD').format('ddd D MMM YYYY');
+    }
+
+    // Due date a task gets when dropped on a column: the day, or the last working day (Mon-Fri) of the week or month
+    dropDate(key) {
+        if (this.state.groupBy === 'week') return moment(key, 'YYYY-MM-DD').isoWeekday(5).format('YYYY-MM-DD');
+        if (this.state.groupBy === 'month') {
+            const m = moment(key, 'YYYY-MM').endOf('month');
+            while (m.isoWeekday() > 5) m.subtract(1, 'days');
+            return m.format('YYYY-MM-DD');
+        }
+        return key;
+    }
+
+    renderKanban(tasks, dateRange, scopeTasks) {
+        const columns = this.buildKanbanColumns(tasks, dateRange, scopeTasks);
+        const board = this.listContainer.createDiv('simple-tasks-board');
+        columns.forEach(col => {
+            const colEl = board.createDiv('simple-tasks-column');
+            const head = colEl.createDiv({ cls: 'simple-tasks-column-head' + (col.isCurrent ? ' is-current' : '') });
+            head.createSpan({ text: col.label, cls: 'simple-tasks-column-title' });
+            head.createSpan({ text: String(col.tasks.length), cls: 'simple-tasks-column-count' });
+            const body = colEl.createDiv('simple-tasks-column-body');
+            col.tasks.forEach(task => {
+                const card = body.createDiv('simple-tasks-item simple-tasks-card');
+                this.renderTaskRow(card, task);
+                card.draggable = true;
+                card.addEventListener('dragstart', (e) => {
+                    this.drag = { task, from: col.key };
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', task.text);
+                    card.addClass('is-dragging');
+                });
+                card.addEventListener('dragend', () => {
+                    card.removeClass('is-dragging');
+                    board.querySelectorAll('.is-drop-target').forEach(b => b.removeClass('is-drop-target'));
+                    this.drag = null;
+                });
+            });
+            body.addEventListener('dragover', (e) => {
+                if (!this.drag || this.drag.from === col.key) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                body.addClass('is-drop-target');
+            });
+            body.addEventListener('dragleave', (e) => { if (!body.contains(e.relatedTarget)) body.removeClass('is-drop-target'); });
+            body.addEventListener('drop', async (e) => {
+                if (!this.drag || this.drag.from === col.key) return;
+                e.preventDefault();
+                body.removeClass('is-drop-target');
+                const task = this.drag.task; this.drag = null;
+                await this.moveTaskToColumn(task, col.key);
+            });
+        });
+    }
+
+    // Rewrites the task line for the column it was dropped on
+    async moveTaskToColumn(task, key) {
+        const group = this.state.groupBy;
+        await this.modifyTaskLine(task, (prefix, mark, text) => {
+            if (group === 'status') return { mark: key, text };
+            if (group === 'category') {
+                // Dropping replaces all categories with the column's one
+                const rest = text.replace(/==[^=]+==/g, '').replace(/\s{2,}/g, ' ').trim();
+                return { mark, text: key === NO_CATEGORY ? rest : `==${key}== ${rest}`.trim() };
+            }
+            const dates = text.match(/\d{4}-\d{2}-\d{2}/g);
+            const lastDate = dates ? dates[dates.length - 1] : null;
+            if (key === NO_DATE) {
+                if (!lastDate) return { mark, text };
+                const i = text.lastIndexOf(lastDate);
+                return { mark, text: (text.substring(0, i) + text.substring(i + lastDate.length)).replace(/\s{2,}/g, ' ').trim() };
+            }
+            const newDate = this.dropDate(key);
+            if (!lastDate) return { mark, text: `${text} ${newDate}` };
+            const i = text.lastIndexOf(lastDate);
+            return { mark, text: text.substring(0, i) + newDate + text.substring(i + lastDate.length) };
+        });
+    }
+
+    // Changes one task line in its note. edit(prefix, mark, text) returns the new { mark, text }.
+    // Nothing is written if the line no longer holds this task (the note changed since the last scan).
+    async modifyTaskLine(task, edit) {
+        const content = await this.app.vault.read(task.file);
+        const lines = content.split('\n');
+        const match = lines.length > task.line ? lines[task.line].match(/^(\s*[-*]\s*)\[([ xX\/])\]\s*(.*)$/) : null;
+        if (!match || match[3] !== task.text) { new Notice('Task changed in the note, refreshing.'); await this.refresh(); return; }
+        const result = edit(match[1], match[2], match[3]);
+        lines[task.line] = `${match[1]}[${result.mark}] ${result.text}`;
+        await this.app.vault.modify(task.file, lines.join('\n'));
+        await this.refresh();
+    }
+
+    // Active due date filter as { from, to } (YYYY-MM-DD, either may be empty), or null for "Any Time"
+    getDateRange() {
+        if (this.state.dateRangeMode === 'relative') {
+            let start, end;
+            if (this.state.relDirection === 'current') {
+                const unitMap = { 'days': 'day', 'weeks': 'isoWeek', 'months': 'month', 'years': 'year' };
+                const u = unitMap[this.state.relUnit] || 'day';
+                start = moment().startOf(u); end = moment().endOf(u);
+            } else {
+                start = moment().startOf('day'); end = moment().startOf('day');
+                // With weeks/months/years the whole current period counts: "last N" runs to its end, "next N" from its start
+                const periodUnit = { 'weeks': 'isoWeek', 'months': 'month', 'years': 'year' }[this.state.relUnit];
+                if (this.state.relDirection === 'next') {
+                    end.add(this.state.relNumber, this.state.relUnit);
+                    if (periodUnit) start = moment().startOf(periodUnit);
+                } else {
+                    start.subtract(this.state.relNumber, this.state.relUnit);
+                    if (periodUnit) end = moment().endOf(periodUnit);
+                }
+            }
+            return { from: start.format('YYYY-MM-DD'), to: end.format('YYYY-MM-DD') };
+        }
+        if (this.state.dateRangeMode === 'specific') return { from: this.state.specificFrom, to: this.state.specificTo };
+        return null;
     }
 
     async updateTaskDate(task, oldDate, newDate) {
@@ -695,10 +916,13 @@ class SimpleTasksView extends MarkdownRenderChild {
         });
     }
     async toggleTask(task) {
-        task.status = !task.status; this.renderList(); const content = await this.app.vault.read(task.file); const lines = content.split('\n');
+        // Click cycle: [ ] -> [/] -> [x] -> [ ]
+        const nextMark = { ' ': '/', '/': 'x', 'x': ' ' };
+        task.mark = nextMark[task.mark] || ' '; task.status = task.mark === 'x';
+        this.renderList(); const content = await this.app.vault.read(task.file); const lines = content.split('\n');
         if (lines.length > task.line) {
-            const match = lines[task.line].match(/^(\s*[-*]\s*)\[([ xX])\]/);
-            if (match) { lines[task.line] = match[1] + (task.status ? '[x]' : '[ ]') + lines[task.line].substring(match[0].length); await this.app.vault.modify(task.file, lines.join('\n')); }
+            const match = lines[task.line].match(/^(\s*[-*]\s*)\[([ xX\/])\]/);
+            if (match) { lines[task.line] = match[1] + `[${task.mark}]` + lines[task.line].substring(match[0].length); await this.app.vault.modify(task.file, lines.join('\n')); }
         }
     }
 }

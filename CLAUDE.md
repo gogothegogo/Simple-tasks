@@ -34,7 +34,7 @@ Everything lives in `main.js`. The classes and their responsibilities:
 
 ### Task model
 
-A task is parsed from any list item where `cache.listItems[i].task` is truthy and the line matches `^(\s*[-*]\s*)\[([ xX])\]\s*(.*)$`. From the matched text, the scanner extracts:
+A task is parsed from any list item where `cache.listItems[i].task` is truthy and the line matches `^(\s*[-*]\s*)\[([ xX\/])\]\s*(.*)$`. `task.mark` holds the status character (`' '` open, `'x'` done, `'/'` in progress) and `task.status` is `true` only for done, so in progress counts as not done in filters and stats. Clicking a list checkbox cycles `[ ]` → `[/]` → `[x]` → `[ ]` (`toggleTask`). List checkboxes get `checked` + `data-task` like Obsidian's own, so themes can draw `[/]` as half done. From the matched text, the scanner extracts:
 
 - **Categories**: every `==NAME==` (Obsidian highlight). Stored uppercased; comparisons are lowercase.
 - **Date**: the *last* `YYYY-MM-DD` substring in the line is treated as the due date. Earlier dates remain plain text. The renderer in `renderList` re-derives `lastDatePartIndex` so only the final date becomes the clickable date-picker span.
@@ -51,9 +51,13 @@ Tag matching treats `#parent` as also matching `#parent/child` (prefix + `/`). F
 
 ### Codeblock config
 
-Parsed line-by-line in `parseConfig`. Recognized keys: `title:`, `view:` (`list`, `stats`, or `list stats`), `status:` (`all`/`undone`/`done`), `cat-mode:` (`include`/`exclude`), `sort:` (`date`/`name`), `search:`, `tags:` / `exclude-tags:`, `folders:` / `exclude-folders:`, `expanded:`, `from:`, `to:`, `date: <next|last> <n> <days|weeks|months|years>`. A bare `==CATEGORY==` line adds that category to `filterCategories`.
+Parsed line-by-line in `parseConfig`. Recognized keys: `title:`, `view:` (`list`, `stats`, or `list stats`), `status:` (`all`/`undone`/`done`), `cat-mode:` (`include`/`exclude`), `sort:` (`date`/`name`, always after a status grouping: `[/]`, then `[ ]`, then `[x]`), `search:`, `tags:` / `exclude-tags:`, `folders:` / `exclude-folders:`, `expanded:`, `kanban:` (`true`/`false`), `group:` (see Kanban), `wrap:` (`true`/`false`, default `true`; `false` adds the `simple-tasks-nowrap` class to the container so each task is cut to one line with an ellipsis), `from:`, `to:`, `date: <next|last|current> <n> <days|weeks|months|years>` (`current` ignores `n` but the parser still needs three parts). A bare `==CATEGORY==` line adds that category to `filterCategories`.
 
 `saveSettingsToCodeBlock()` writes back via `ctx.getSectionInfo()` + `vault.modify()`, replacing only the body lines between the fences.
+
+### Kanban
+
+`kanban: true` swaps the list for a board (`renderKanban`), `group:` picks the columns (`KANBAN_GROUPS`: `category`, `status`, `day`, `week`, `month`). `renderList` does all filtering and sorting first, then hands the sorted tasks to the board, so filters and order are shared. `renderTaskRow` renders checkbox, text and file name for both list rows and cards. `buildKanbanColumns` makes the columns: category columns come from `statsScopedTasks` (before the status filter), or are exactly the selected categories in include mode; date columns come from task dates plus the current period plus every period of the date filter (`getDateRange`, max 62). Drops go through `moveTaskToColumn` → `modifyTaskLine`, which re-reads the note and refuses to write if the line no longer holds the same task text. Week drops set the Friday of the ISO week, month drops the last Monday to Friday day of the month (`dropDate`). Drag and drop is HTML5 DnD, so it does not work on touch.
 
 ### Stats vs list
 
