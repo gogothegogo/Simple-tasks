@@ -117,5 +117,6 @@ The plugin settings have global excluded folders and tags. They apply to every v
 - **Category chips**: click to toggle a category. "ALL" clears the category filter.
 - **Checkboxes in the list**: each click moves the task to the next status, `[ ]` → `[/]` → `[x]` → `[ ]`. The note is updated.
 - **Due dates in the list**: click a date to change it with a date picker. The note is updated.
+- **Categories in the list and on cards**: click a category to pick another one from all categories in the vault. Only the clicked category is replaced. If the task already has the picked category, the clicked one is just removed. The note is updated.
 - **Save (💾)**: write the current filters back into the code block.
 - **Refresh (⟳)**: force a manual vault scan.

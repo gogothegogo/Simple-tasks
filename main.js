@@ -1,6 +1,6 @@
 'use strict';
 
-const { Plugin, PluginSettingTab, Setting, MarkdownRenderChild, AbstractInputSuggest, EditorSuggest, moment, MarkdownView, Notice } = require('obsidian');
+const { Plugin, PluginSettingTab, Setting, MarkdownRenderChild, AbstractInputSuggest, EditorSuggest, moment, MarkdownView, Notice, Menu } = require('obsidian');
 
 // Kanban grouping options: [codeblock value, dropdown label]
 const KANBAN_GROUPS = [['category', 'By Category'], ['status', 'By Status'], ['day', 'By Day'], ['week', 'By Week'], ['month', 'By Month']];
@@ -611,7 +611,10 @@ class SimpleTasksView extends MarkdownRenderChild {
             
                         parts.forEach((part, idx) => {
                             if (part && part.startsWith('==')) {
-                                div.createSpan({ cls: 'simple-tasks-category', text: part.replace(/==/g, '').toUpperCase() });
+                                const catSpan = div.createSpan({ cls: 'simple-tasks-category is-interactive', text: part.replace(/==/g, '').toUpperCase(), title: 'Change category' });
+                                // Which ==X== in the line this chip is, in case the same category appears twice
+                                const occurrence = parts.slice(0, idx).filter(p => p === part).length;
+                                catSpan.onclick = (e) => { e.preventDefault(); e.stopPropagation(); this.showCategoryMenu(e, task, part, occurrence); };
                             } else if (part && part.match(/^\d{4}-\d{2}-\d{2}$/)) {
                                 if (idx === lastDatePartIndex) {
                                     const dateSpan = div.createSpan({
@@ -821,6 +824,27 @@ class SimpleTasksView extends MarkdownRenderChild {
         const scrollKey = `${this.ctx.sourcePath}\n${this.source}`;
         board.scrollLeft = this.plugin.boardScroll.get(scrollKey) || 0;
         board.addEventListener('scroll', () => this.plugin.boardScroll.set(scrollKey, board.scrollLeft));
+    }
+
+    // Menu of all categories in the vault; picking one replaces the clicked category in the task line
+    showCategoryMenu(evt, task, oldPart, occurrence) {
+        const current = oldPart.replace(/==/g, '').trim().toUpperCase();
+        const menu = new Menu();
+        Array.from(this.state.availableCategories).sort().forEach(cat => {
+            menu.addItem(item => item.setTitle(cat).setChecked(cat === current).onClick(async () => {
+                if (cat === current) return;
+                await this.modifyTaskLine(task, (prefix, mark, text) => {
+                    // Find the clicked ==X== by its occurrence
+                    let i = -1;
+                    for (let n = 0; n <= occurrence; n++) { i = text.indexOf(oldPart, i + 1); if (i === -1) return { mark, text }; }
+                    // If the task already has the new category, just drop the old one instead of duplicating
+                    const hasNew = (task.categories || []).includes(cat);
+                    const replacement = hasNew ? '' : `==${cat}==`;
+                    return { mark, text: (text.substring(0, i) + replacement + text.substring(i + oldPart.length)).replace(/\s{2,}/g, ' ').trim() };
+                });
+            }));
+        });
+        menu.showAtMouseEvent(evt);
     }
 
     // Rewrites the task line for the column it was dropped on

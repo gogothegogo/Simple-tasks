@@ -231,6 +231,13 @@
     margin-right: 4px;
 }
 
+.simple-tasks-category.is-interactive {
+    cursor: pointer;
+}
+.simple-tasks-category.is-interactive:hover {
+    outline: 1px solid var(--interactive-accent);
+}
+
 .simple-tasks-date-text { color: var(--text-warning); font-size: 0.9em; margin: 0 4px; }
 .simple-tasks-date-text.is-interactive {
     cursor: pointer;

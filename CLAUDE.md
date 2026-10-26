@@ -59,6 +59,10 @@ Parsed line-by-line in `parseConfig`. Recognized keys: `title:`, `view:` (`list`
 
 `kanban: true` swaps the list for a board (`renderKanban`), `group:` picks the columns (`KANBAN_GROUPS`: `category`, `status`, `day`, `week`, `month`). `renderList` does all filtering and sorting first, then hands the sorted tasks to the board, so filters and order are shared. `renderTaskRow` renders checkbox, text and file name for both list rows and cards. `buildKanbanColumns` makes the columns: category columns come from `statsScopedTasks` (before the status filter), or are exactly the selected categories in include mode; date columns come from task dates plus the current period plus every period of the date filter (`getDateRange`, max 62). Drops go through `moveTaskToColumn` → `modifyTaskLine`, which re-reads the note and refuses to write if the line no longer holds the same task text. Week drops set the Friday of the ISO week, month drops the last Monday to Friday day of the month (`dropDate`). Drag and drop is HTML5 DnD, so it does not work on touch.
 
+### Category menu
+
+Category chips in `renderTaskRow` are clickable: `showCategoryMenu` opens an Obsidian `Menu` with all `availableCategories` and replaces only the clicked `==X==` (found by its occurrence in the line) via `modifyTaskLine`. If the task already has the picked category, the clicked one is removed instead of creating a duplicate.
+
 ### Stats vs list
 
 `renderList` computes `statsScopedTasks` (everything except the status filter) and then `filtered` (with status filter applied). Stats are rendered from `statsScopedTasks` so the pending counter isn't tautological when the user filters to "undone" only.
