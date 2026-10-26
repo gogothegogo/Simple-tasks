@@ -814,6 +814,13 @@ class SimpleTasksView extends MarkdownRenderChild {
                 await this.moveTaskToColumn(task, col.key);
             });
         });
+
+        // Every change redraws the board, so keep the horizontal scroll position. It is stored per
+        // code block on the plugin, so it also survives Obsidian re-rendering the whole code block.
+        if (!this.plugin.boardScroll) this.plugin.boardScroll = new Map();
+        const scrollKey = `${this.ctx.sourcePath}\n${this.source}`;
+        board.scrollLeft = this.plugin.boardScroll.get(scrollKey) || 0;
+        board.addEventListener('scroll', () => this.plugin.boardScroll.set(scrollKey, board.scrollLeft));
     }
 
     // Rewrites the task line for the column it was dropped on
