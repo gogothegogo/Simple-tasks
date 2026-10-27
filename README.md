@@ -76,9 +76,9 @@ One option per line. All options are optional.
 
 #### Relative dates (`date:`)
 
-- `date: next 2 weeks`: from the start of the current week (Monday) to two weeks ahead. With `months` or `years`, from the start of the current month or year. `next 7 days` starts today.
+- `date: next 2 weeks`: the current week plus the two whole weeks after it, Monday to Sunday. With `months` or `years`, the current month or year plus the next two whole ones. `next 7 days` runs from today to seven days ahead.
 - `date: last 7 days`: from seven days ago to today.
-- `date: last 2 weeks`: from two weeks ago to the end of the current week (Sunday). With `months` or `years`, to the end of the current month or year.
+- `date: last 2 weeks`: the two whole weeks before the current one plus the current week, Monday to Sunday. With `months` or `years`, the same with whole months or years.
 - `date: current 1 months`: the current calendar month. `current` works with `days`, `weeks` (ISO week, Monday to Sunday), `months` and `years`. The number is ignored, but it must be there for the line to be read.
 
 Use either `date:` or `from:`/`to:`, not both. Tasks without a due date are hidden while a date filter is active.
@@ -95,6 +95,7 @@ Tasks stay plain task lines in your notes. The board is just another way to show
 | `week` | One per ISO week (Monday to Sunday) with tasks, plus the current week and **NO DATE**. | Sets the due date to the Friday of that week. |
 | `month` | One per month with tasks, plus the current month and **NO DATE**. | Sets the due date to the last working day (Monday to Friday) of that month. |
 
+- Drag a column header onto another column to move all its cards at once. Each card changes as if it was dropped on its own, by the rules above.
 - Category columns come from the tasks the view shows before the status filter. A category column disappears when its last task moves out. To keep one on the board, select it in the category filter: with selected categories (IS mode) the board shows exactly those columns, even when empty.
 - With a date filter, the board also shows the empty days, weeks or months in that range (up to 62 columns), and hides NO DATE, because undated tasks are filtered out.
 - On NO DATE, a dropped card loses its due date. If a task has no date yet, the new date is added at the end of the line.

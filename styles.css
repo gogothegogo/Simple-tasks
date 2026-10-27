@@ -301,6 +301,14 @@
     font-size: var(--font-ui-small);
 }
 
+.simple-tasks-column-head.is-draggable {
+    cursor: grab;
+}
+
+.simple-tasks-column.is-dragging {
+    opacity: 0.45;
+}
+
 .simple-tasks-column-head.is-current {
     color: var(--text-accent);
 }

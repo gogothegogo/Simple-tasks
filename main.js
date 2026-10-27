@@ -785,13 +785,29 @@ class SimpleTasksView extends MarkdownRenderChild {
             const head = colEl.createDiv({ cls: 'simple-tasks-column-head' + (col.isCurrent ? ' is-current' : '') });
             head.createSpan({ text: col.label, cls: 'simple-tasks-column-title' });
             head.createSpan({ text: String(col.tasks.length), cls: 'simple-tasks-column-count' });
+            // Dragging the header moves every card of the column
+            if (col.tasks.length > 0) {
+                head.draggable = true;
+                head.addClass('is-draggable');
+                head.addEventListener('dragstart', (e) => {
+                    this.drag = { tasks: col.tasks, from: col.key };
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', col.label);
+                    colEl.addClass('is-dragging');
+                });
+                head.addEventListener('dragend', () => {
+                    colEl.removeClass('is-dragging');
+                    board.querySelectorAll('.is-drop-target').forEach(b => b.removeClass('is-drop-target'));
+                    this.drag = null;
+                });
+            }
             const body = colEl.createDiv('simple-tasks-column-body');
             col.tasks.forEach(task => {
                 const card = body.createDiv('simple-tasks-item simple-tasks-card');
                 this.renderTaskRow(card, task);
                 card.draggable = true;
                 card.addEventListener('dragstart', (e) => {
-                    this.drag = { task, from: col.key };
+                    this.drag = { tasks: [task], from: col.key };
                     e.dataTransfer.effectAllowed = 'move';
                     e.dataTransfer.setData('text/plain', task.text);
                     card.addClass('is-dragging');
@@ -802,19 +818,20 @@ class SimpleTasksView extends MarkdownRenderChild {
                     this.drag = null;
                 });
             });
-            body.addEventListener('dragover', (e) => {
+            // The whole column, header included, is the drop target
+            colEl.addEventListener('dragover', (e) => {
                 if (!this.drag || this.drag.from === col.key) return;
                 e.preventDefault();
                 e.dataTransfer.dropEffect = 'move';
                 body.addClass('is-drop-target');
             });
-            body.addEventListener('dragleave', (e) => { if (!body.contains(e.relatedTarget)) body.removeClass('is-drop-target'); });
-            body.addEventListener('drop', async (e) => {
+            colEl.addEventListener('dragleave', (e) => { if (!colEl.contains(e.relatedTarget)) body.removeClass('is-drop-target'); });
+            colEl.addEventListener('drop', async (e) => {
                 if (!this.drag || this.drag.from === col.key) return;
                 e.preventDefault();
                 body.removeClass('is-drop-target');
-                const task = this.drag.task; this.drag = null;
-                await this.moveTaskToColumn(task, col.key);
+                const tasks = this.drag.tasks; this.drag = null;
+                await this.moveTasksToColumn(tasks, col.key);
             });
         });
 
@@ -847,10 +864,18 @@ class SimpleTasksView extends MarkdownRenderChild {
         menu.showAtMouseEvent(evt);
     }
 
+    // Moves dropped tasks (one card, or all cards of a dragged column) and redraws once at the end
+    async moveTasksToColumn(tasks, key) {
+        let moved = 0;
+        for (const task of tasks) { if (await this.moveTaskToColumn(task, key, false)) moved++; }
+        if (tasks.length > 1) new Notice(moved === tasks.length ? `Moved ${moved} tasks` : `Moved ${moved} of ${tasks.length} tasks, the others changed in their notes`);
+        await this.refresh();
+    }
+
     // Rewrites the task line for the column it was dropped on
-    async moveTaskToColumn(task, key) {
+    async moveTaskToColumn(task, key, refresh = true) {
         const group = this.state.groupBy;
-        await this.modifyTaskLine(task, (prefix, mark, text) => {
+        return this.modifyTaskLine(task, (prefix, mark, text) => {
             if (group === 'status') return { mark: key, text };
             if (group === 'category') {
                 // Dropping replaces all categories with the column's one
@@ -868,20 +893,25 @@ class SimpleTasksView extends MarkdownRenderChild {
             if (!lastDate) return { mark, text: `${text} ${newDate}` };
             const i = text.lastIndexOf(lastDate);
             return { mark, text: text.substring(0, i) + newDate + text.substring(i + lastDate.length) };
-        });
+        }, refresh);
     }
 
     // Changes one task line in its note. edit(prefix, mark, text) returns the new { mark, text }.
     // Nothing is written if the line no longer holds this task (the note changed since the last scan).
-    async modifyTaskLine(task, edit) {
+    // Returns true when the line was written. With refresh = false the caller redraws the view.
+    async modifyTaskLine(task, edit, refresh = true) {
         const content = await this.app.vault.read(task.file);
         const lines = content.split('\n');
         const match = lines.length > task.line ? lines[task.line].match(/^(\s*[-*]\s*)\[([ xX\/])\]\s*(.*)$/) : null;
-        if (!match || match[3] !== task.text) { new Notice('Task changed in the note, refreshing.'); await this.refresh(); return; }
+        if (!match || match[3] !== task.text) {
+            if (refresh) { new Notice('Task changed in the note, refreshing.'); await this.refresh(); }
+            return false;
+        }
         const result = edit(match[1], match[2], match[3]);
         lines[task.line] = `${match[1]}[${result.mark}] ${result.text}`;
         await this.app.vault.modify(task.file, lines.join('\n'));
-        await this.refresh();
+        if (refresh) await this.refresh();
+        return true;
     }
 
     // Active due date filter as { from, to } (YYYY-MM-DD, either may be empty), or null for "Any Time"
@@ -894,14 +924,14 @@ class SimpleTasksView extends MarkdownRenderChild {
                 start = moment().startOf(u); end = moment().endOf(u);
             } else {
                 start = moment().startOf('day'); end = moment().startOf('day');
-                // With weeks/months/years the whole current period counts: "last N" runs to its end, "next N" from its start
+                // With weeks/months/years only whole periods count: the current one plus N whole periods back or ahead
                 const periodUnit = { 'weeks': 'isoWeek', 'months': 'month', 'years': 'year' }[this.state.relUnit];
                 if (this.state.relDirection === 'next') {
                     end.add(this.state.relNumber, this.state.relUnit);
-                    if (periodUnit) start = moment().startOf(periodUnit);
+                    if (periodUnit) { start = moment().startOf(periodUnit); end.endOf(periodUnit); }
                 } else {
                     start.subtract(this.state.relNumber, this.state.relUnit);
-                    if (periodUnit) end = moment().endOf(periodUnit);
+                    if (periodUnit) { start.startOf(periodUnit); end = moment().endOf(periodUnit); }
                 }
             }
             return { from: start.format('YYYY-MM-DD'), to: end.format('YYYY-MM-DD') };
