@@ -6,6 +6,10 @@ const { Plugin, PluginSettingTab, Setting, MarkdownRenderChild, AbstractInputSug
 const KANBAN_GROUPS = [['category', 'By Category'], ['status', 'By Status'], ['day', 'By Day'], ['week', 'By Week'], ['month', 'By Month']];
 const NO_CATEGORY = 'NO CATEGORY';
 const NO_DATE = 'NO DATE';
+// A task line: prefix (quote/callout markers, bullet or number), status mark, text, and a trailing \r in CRLF notes
+const TASK_LINE = /^((?:\s*>)*\s*(?:[-*+]|\d+[.)])\s*)\[([ xX\/])\]\s*(.*?)(\r?)$/;
+// Tags start at the beginning of the text or after a space, so a URL like page#section is not a tag
+const TAG_REGEX = /(?:^|\s)(#[\p{L}\p{N}_\/-]+)/gu;
 
 class TaskScanner {
     constructor(app, plugin) {
@@ -47,7 +51,7 @@ class TaskScanner {
                 const line = lines[i];
                 if (!line) continue;
 
-                const taskMatch = line.match(/^(\s*[-*]\s*)\[([ xX\/])\]\s*(.*)$/);
+                const taskMatch = line.match(TASK_LINE);
                 if (taskMatch) {
                     const text = taskMatch[3];
                     // Extract categories
@@ -68,9 +72,9 @@ class TaskScanner {
                     
                     // Extract task-level tags
                     const taskTags = [];
-                    const tagRegex = /#[\w\/-]+/g;
+                    const tagRegex = new RegExp(TAG_REGEX.source, TAG_REGEX.flags);
                     while ((match = tagRegex.exec(text)) !== null) {
-                        taskTags.push(match[0]);
+                        taskTags.push(match[1]);
                     }
 
                     const allTaskTags = [...new Set([...fileTags, ...taskTags])];
@@ -110,11 +114,17 @@ class TaskScanner {
         if (cache.frontmatter && cache.frontmatter.tags) {
             const fmTags = cache.frontmatter.tags;
             if (Array.isArray(fmTags)) {
-                fmTags.forEach(t => tags.add(t.startsWith('#') ? t : '#' + t));
+                // YAML can give numbers (tags: [2026]) or empty items, so make every tag a string first
+                fmTags.filter(t => t !== null && t !== undefined && String(t).trim()).forEach(t => {
+                    const s = String(t).trim();
+                    tags.add(s.startsWith('#') ? s : '#' + s);
+                });
+            } else if (typeof fmTags === 'number') {
+                tags.add('#' + fmTags);
             } else if (typeof fmTags === 'string') {
                 fmTags.split(',').forEach(t => {
                     const trimmed = t.trim();
-                    tags.add(trimmed.startsWith('#') ? trimmed : '#' + trimmed);
+                    if (trimmed) tags.add(trimmed.startsWith('#') ? trimmed : '#' + trimmed);
                 });
             }
         }
@@ -144,6 +154,9 @@ class CategorySuggest extends EditorSuggest {
         const match = sub.match(/(?:^|\s)(\[([ xX]?)\])([^\]]*)$/);
         if (match) {
             const startCh = match.index + match[0].indexOf(match[1]);
+            // The checkbox of a task line is not a trigger, only a [] typed later in the line
+            const taskPrefix = line.match(TASK_LINE);
+            if (taskPrefix && startCh === taskPrefix[1].length) return null;
             return { start: { line: cursor.line, ch: startCh }, end: cursor, query: match[3] || "" };
         }
         return null;
@@ -155,7 +168,7 @@ class CategorySuggest extends EditorSuggest {
         const mRegex = /==([^=]+)==/g;
         let m;
         while ((m = mRegex.exec(line)) !== null) existing.add(m[1].trim().toLowerCase());
-        const cache = this.plugin.globalCategoryCache || new Set();
+        const cache = this.plugin.globalCategoryCache && this.plugin.globalCategoryCache.size > 0 ? this.plugin.globalCategoryCache : new Set(['TODO']);
         return Array.from(cache).filter(cat => {
             const l = cat.toLowerCase();
             return l.includes(query) && !existing.has(l);
@@ -168,7 +181,7 @@ class CategorySuggest extends EditorSuggest {
         const match = line.substring(start.ch).match(/^\[([ xX]?)\]/);
         let status = (match && match[1]) ? match[1] : " ";
         if (status.trim() === "") status = " ";
-        const isAlreadyTask = /^(\s*)[-*]\s*\[([ xX\/])\]/.test(line);
+        const isAlreadyTask = TASK_LINE.test(line);
         if (isAlreadyTask) {
             editor.replaceRange(`==${suggestion.value}== `, start, end);
         } else {
@@ -277,7 +290,9 @@ class SimpleTasksView extends MarkdownRenderChild {
             filtersExpanded: config.expanded !== undefined ? config.expanded : true,
             wrapText: config.wrap !== undefined ? config.wrap : true,
             kanban: config.kanban || false,
-            groupBy: config.group || 'category'
+            groupBy: config.group || 'category',
+            unsetColumn: config.unset || false,
+            maxCards: config.maxCards || 0
         };
         this.refreshTimer = null;
     }
@@ -288,8 +303,10 @@ class SimpleTasksView extends MarkdownRenderChild {
             this.refreshTimer = setTimeout(() => this.refresh(), 1000);
         }));
     }
-    onunload() { if (this.refreshTimer) clearTimeout(this.refreshTimer); }
-    async refresh() { await this.scanVault(); this.renderHeader(); this.renderList(); }
+    onunload() { if (this.refreshTimer) clearTimeout(this.refreshTimer); if (this.boardObserver) this.boardObserver.disconnect(); }
+    // Only the category chips depend on the scan, so the rest of the header (search field focus, open dropdowns,
+    // a title being edited) stays as it is
+    async refresh() { await this.scanVault(); if (this.listContainer) this.renderCategoryBar(); else this.renderHeader(); this.renderList(); }
     parseConfig(source) {
         const config = { filterCategories: new Set(), categoryFilterMode: 'include', status: 'all', excludedTags: [], excludedFolders: [], sort: 'date', title: null, showList: true, showStats: false, search: "", dateRangeMode: 'all' };
         source.split('\n').forEach(line => {
@@ -308,14 +325,19 @@ class SimpleTasksView extends MarkdownRenderChild {
             else if (l.startsWith('wrap:')) config.wrap = l.replace('wrap:', '').trim() !== 'false';
             else if (l.startsWith('kanban:')) config.kanban = l.replace('kanban:', '').trim() === 'true';
             else if (l.startsWith('group:')) { const g = l.replace('group:', '').trim(); if (KANBAN_GROUPS.some(([v]) => v === g)) config.group = g; }
+            else if (l.startsWith('unset:')) config.unset = l.replace('unset:', '').trim() === 'true';
+            else if (l.startsWith('max-cards:')) { const n = parseInt(l.replace('max-cards:', '').trim()); if (n > 0) config.maxCards = n; }
             else if (l.startsWith('from:')) { config.specificFrom = l.replace('from:', '').trim(); config.dateRangeMode = 'specific'; }
             else if (l.startsWith('to:')) { config.specificTo = l.replace('to:', '').trim(); config.dateRangeMode = 'specific'; }
             else if (l.startsWith('date:')) {
                 const parts = l.replace('date:', '').trim().split(' ');
                 if (parts.length >= 3) { config.dateRangeMode = 'relative'; config.relDirection = parts[0]; config.relNumber = parseInt(parts[1]); config.relUnit = parts[2]; }
             }
-            const catMatch = l.match(/==([^=]+)==/);
-            if (catMatch) config.filterCategories.add(catMatch[1].trim().toLowerCase());
+            else {
+                // Category filter lines; ==X== inside title: or search: is not a filter
+                const catMatch = l.match(/^==([^=]+)==$/);
+                if (catMatch) config.filterCategories.add(catMatch[1].trim().toLowerCase());
+            }
         });
         return config;
     }
@@ -366,19 +388,21 @@ class SimpleTasksView extends MarkdownRenderChild {
         const searchInput = row1.createEl('input', { type: 'text', placeholder: 'Search...', cls: 'simple-tasks-input-long' });
         searchInput.value = this.state.searchTerm; searchInput.oninput = (e) => { this.state.searchTerm = e.target.value; this.renderList(); };
 
-        const exTags = row1.createEl('input', { type: 'text', placeholder: 'Exclude tags...', cls: 'simple-tasks-input-long' });
-        exTags.value = this.state.excludedTags.join(', ');
-        exTags.oninput = (e) => { 
-            this.state.excludedTags = e.target.value.split(',').map(t => t.trim()).filter(t => t);     
-            this.renderList(); 
-        };
-        
-        const exFolders = row1.createEl('input', { type: 'text', placeholder: 'Exclude folders...', cls: 'simple-tasks-input-long' });
-        exFolders.value = this.state.excludedFolders.join(', '); 
-        exFolders.oninput = (e) => { 
-            this.state.excludedFolders = e.target.value.split(',').map(f => f.trim()).filter(f => f);
+        // These fields are "show only" filters. The scan skips the global exclusions while they are set,
+        // so scan again when they go from empty to set or back.
+        const hasLocalFilters = () => this.state.excludedTags.length > 0 || this.state.excludedFolders.length > 0;
+        const updateLocalFilters = async (apply) => {
+            const before = hasLocalFilters(); apply();
+            if (before !== hasLocalFilters()) { await this.scanVault(); this.renderCategoryBar(); }
             this.renderList();
         };
+        const exTags = row1.createEl('input', { type: 'text', placeholder: 'Only tags...', cls: 'simple-tasks-input-long', title: 'Show only tasks with these tags (comma separated)' });
+        exTags.value = this.state.excludedTags.join(', ');
+        exTags.oninput = (e) => updateLocalFilters(() => { this.state.excludedTags = e.target.value.split(',').map(t => t.trim()).filter(t => t); });
+
+        const exFolders = row1.createEl('input', { type: 'text', placeholder: 'Only folders...', cls: 'simple-tasks-input-long', title: 'Show only tasks from these folders (comma separated)' });
+        exFolders.value = this.state.excludedFolders.join(', ');
+        exFolders.oninput = (e) => updateLocalFilters(() => { this.state.excludedFolders = e.target.value.split(',').map(f => f.trim()).filter(f => f); });
 
         const wrapLabel = row1.createEl('label', { cls: 'simple-tasks-checkbox-label simple-tasks-compact', title: 'Wrap long tasks, or cut them to one line' });
         const wrapCb = wrapLabel.createEl('input', { type: 'checkbox' }); wrapCb.checked = this.state.wrapText;
@@ -394,7 +418,22 @@ class SimpleTasksView extends MarkdownRenderChild {
             KANBAN_GROUPS.forEach(([v, l]) => {
                 const opt = groupSelect.createEl('option', { value: v, text: l }); if (this.state.groupBy === v) opt.selected = true;
             });
-            groupSelect.onchange = (e) => { this.state.groupBy = e.target.value; this.renderList(); };
+            groupSelect.onchange = (e) => { this.state.groupBy = e.target.value; this.renderHeader(); this.renderList(); };
+            // Every task has a status, so the column for tasks without a value only exists for category and dates
+            if (this.state.groupBy !== 'status') {
+                const unsetLabel = row1.createEl('label', { cls: 'simple-tasks-checkbox-label simple-tasks-compact', title: 'Add a column on the right for tasks without a category or due date' });
+                const unsetCb = unsetLabel.createEl('input', { type: 'checkbox' }); unsetCb.checked = this.state.unsetColumn;
+                unsetLabel.appendText(' Unset');
+                unsetCb.onchange = (e) => { this.state.unsetColumn = e.target.checked; this.renderList(); };
+            }
+            const maxSelect = row1.createEl('select', { cls: 'simple-tasks-compact', title: 'Cards shown per column before it scrolls' });
+            const maxOptions = [[0, 'Unlimited'], [10, '10 cards'], [20, '20 cards'], [30, '30 cards']];
+            // A value typed in the code block that is not in the list still shows as selected
+            if (!maxOptions.some(([v]) => v === this.state.maxCards)) maxOptions.push([this.state.maxCards, `${this.state.maxCards} cards`]);
+            maxOptions.forEach(([v, l]) => {
+                const opt = maxSelect.createEl('option', { value: String(v), text: l }); if (this.state.maxCards === v) opt.selected = true;
+            });
+            maxSelect.onchange = (e) => { this.state.maxCards = parseInt(e.target.value) || 0; this.renderList(); };
         }
 
         const row2 = this.filterWrapper.createDiv('simple-tasks-header-row');
@@ -468,8 +507,10 @@ class SimpleTasksView extends MarkdownRenderChild {
         });
     }
     async saveSettingsToCodeBlock() {
+        // Write into the note that holds this code block (ctx.sourcePath), not the active editor:
+        // in a daily notes view or an embed those can be different notes
         const section = this.ctx.getSectionInfo(this.containerEl); if (!section) { new Notice("Cannot find code block."); return; }
-        const view = this.app.workspace.getActiveViewOfType(MarkdownView); if (!view) return;
+        const file = this.app.vault.getAbstractFileByPath(this.ctx.sourcePath); if (!file) { new Notice("Cannot find code block."); return; }
         const newLines = []; if (this.state.title) newLines.push(`title: ${this.state.title}`);
         const views = []; if (this.state.showList) views.push('list'); if (this.state.showStats) views.push('stats');
         newLines.push(`view: ${views.join(' ')}`);
@@ -481,18 +522,29 @@ class SimpleTasksView extends MarkdownRenderChild {
         if (this.state.excludedFolders.length > 0) newLines.push(`folders: ${this.state.excludedFolders.join(', ')}`);
         newLines.push(`expanded: ${this.state.filtersExpanded}`);
         if (!this.state.wrapText) newLines.push('wrap: false');
-        if (this.state.kanban) { newLines.push('kanban: true'); newLines.push(`group: ${this.state.groupBy}`); }
+        if (this.state.kanban) {
+            newLines.push('kanban: true'); newLines.push(`group: ${this.state.groupBy}`);
+            if (this.state.unsetColumn) newLines.push('unset: true');
+            if (this.state.maxCards > 0) newLines.push(`max-cards: ${this.state.maxCards}`);
+        }
         if (this.state.dateRangeMode === 'relative') newLines.push(`date: ${this.state.relDirection} ${this.state.relNumber} ${this.state.relUnit}`);
         else if (this.state.dateRangeMode === 'specific') { if (this.state.specificFrom) newLines.push(`from: ${this.state.specificFrom}`); if (this.state.specificTo) newLines.push(`to: ${this.state.specificTo}`); }
         this.state.filterCategories.forEach(cat => newLines.push(`==${cat}==`));
-        const content = await this.app.vault.read(view.file); const lines = content.split('\n');
-        lines.splice(section.lineStart + 1, section.lineEnd - section.lineStart - 1, ...newLines);
-        await this.app.vault.modify(view.file, lines.join('\n')); new Notice("Filters saved!");
+        let saved = false;
+        await this.app.vault.process(file, (content) => {
+            const lines = content.split('\n');
+            // Only write when the lines still are this code block's fences
+            const fenceOk = /^\s*(`{3,}|~{3,})\s*simpletasks/.test(lines[section.lineStart] || '') && /^\s*(`{3,}|~{3,})\s*$/.test(lines[section.lineEnd] || '');
+            if (!fenceOk) return content;
+            lines.splice(section.lineStart + 1, section.lineEnd - section.lineStart - 1, ...newLines);
+            saved = true;
+            return lines.join('\n');
+        });
+        new Notice(saved ? "Filters saved!" : "Cannot find code block, the note changed. Nothing saved.");
     }
     async scanVault() {
         const { tasks, categoriesSet } = await this.scanner.scanVault(this.state, this.globalSettings);
         this.state.tasks = tasks; this.state.availableCategories = categoriesSet; this.state.loading = false;
-        const plugin = this.app.plugins.getPlugin('simple-tasks'); if (plugin) plugin.globalCategoryCache = categoriesSet;
     }
     renderList() {
         if (!this.listContainer) return; this.listContainer.empty();
@@ -505,6 +557,10 @@ class SimpleTasksView extends MarkdownRenderChild {
         const globalExcludeFolders = this.globalSettings.excludedFolders || [];
         const globalExcludeTags = this.globalSettings.excludedTags || [];
         const dateRange = this.getDateRange();
+        // With the Unset column on, tasks without the grouped value pass the filter on that value, so the column can show them
+        const unsetGroup = this.state.kanban && this.state.unsetColumn ? this.state.groupBy : null;
+        const keepUndated = unsetGroup === 'day' || unsetGroup === 'week' || unsetGroup === 'month';
+        const keepUncategorized = unsetGroup === 'category';
 
         let statsScopedTasks = this.state.tasks.filter(t => {
             const matchesLocalTags = localTags.length > 0 && t.tags.some(tag => 
@@ -536,13 +592,13 @@ class SimpleTasksView extends MarkdownRenderChild {
             if (this.state.filterCategories.size > 0) {
                 const hasSelectedCat = t.categories.some(c => this.state.filterCategories.has(c.toLowerCase()));
                 if (this.state.categoryFilterMode === 'include') {
-                    if (!hasSelectedCat) return false;
+                    if (!hasSelectedCat && !(keepUncategorized && t.categories.length === 0)) return false;
                 } else {
                     if (hasSelectedCat) return false;
                 }
             }
 
-            if (dateRange) {
+            if (dateRange && !(keepUndated && !t.date)) {
                 if (dateRange.from && (!t.date || t.date < dateRange.from)) return false;
                 if (dateRange.to && (!t.date || t.date > dateRange.to)) return false;
             }
@@ -586,6 +642,7 @@ class SimpleTasksView extends MarkdownRenderChild {
             // Same markup as Obsidian's own task checkboxes, so themes can draw [/] as half done
             const cb = el.createEl('input', { type: 'checkbox', cls: 'simple-tasks-checkbox' }); cb.checked = task.mark !== ' '; cb.dataset.task = task.mark;
             cb.onclick = async (e) => { e.stopPropagation(); await this.toggleTask(task); };
+            cb.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); this.showStatusMenu(e, task); });
                         const div = el.createDiv('simple-tasks-content');
                         // Extract the task text without the checkbox part
                         const taskText = task.text;
@@ -598,7 +655,8 @@ class SimpleTasksView extends MarkdownRenderChild {
             
                         // We split by categories, dates, and tags
                         // We need to be careful to only treat the LAST occurrence of a date as special
-                        const parts = taskText.split(/(==[^=]+==)|(\d{4}-\d{2}-\d{2})|(#[w/-]+)/g).filter(p => p);
+                        // A tag part keeps the space in front of it (see TAG_REGEX)
+                        const parts = taskText.split(new RegExp(`(==[^=]+==)|(\\d{4}-\\d{2}-\\d{2})|(${TAG_REGEX.source.replace('(#', '(?:#')})`, 'gu')).filter(p => p);
                         
                         // Find the index of the last date part
                         let lastDatePartIndex = -1;
@@ -680,8 +738,9 @@ class SimpleTasksView extends MarkdownRenderChild {
                                     // Not the last date, render as normal text
                                     div.createSpan({ text: part });
                                 }
-                            } else if (part && part.startsWith('#')) {
-                                div.createSpan({ cls: 'simple-tasks-tag-text', text: part });
+                            } else if (part && /^\s?#/.test(part)) {
+                                if (part[0] !== '#') div.appendText(part[0]);
+                                div.createSpan({ cls: 'simple-tasks-tag-text', text: part.trim() });
                             } else if (part) {
                                 div.createSpan({ text: part });
                             }
@@ -721,10 +780,10 @@ class SimpleTasksView extends MarkdownRenderChild {
                 // Only the selected categories, also when empty, so they work as drop targets
                 selected.sort().forEach(c => addColumn(c, c));
             } else {
-                addColumn(NO_CATEGORY, NO_CATEGORY);
                 const excluded = this.state.categoryFilterMode === 'exclude' ? selected : [];
                 Array.from(new Set([].concat(...scopeTasks.map(t => t.categories)))).filter(c => !excluded.includes(c)).sort().forEach(c => addColumn(c, c));
             }
+            if (this.state.unsetColumn) addColumn(NO_CATEGORY, NO_CATEGORY);
             tasks.forEach(t => {
                 const cats = t.categories.length > 0 ? t.categories : [NO_CATEGORY];
                 cats.forEach(c => { if (columns.has(c)) columns.get(c).tasks.push(t); });
@@ -743,8 +802,7 @@ class SimpleTasksView extends MarkdownRenderChild {
         }
         const currentKey = this.periodKey(moment().format('YYYY-MM-DD'));
         Array.from(keys).sort().forEach(k => addColumn(k, this.periodLabel(k), k === currentKey));
-        // Undated tasks only exist when no date filter is set
-        if (!dateRange) addColumn(NO_DATE, NO_DATE);
+        if (this.state.unsetColumn) addColumn(NO_DATE, NO_DATE);
         tasks.forEach(t => { const k = t.date ? this.periodKey(t.date) : NO_DATE; if (columns.has(k)) columns.get(k).tasks.push(t); });
         return Array.from(columns.values());
     }
@@ -837,10 +895,41 @@ class SimpleTasksView extends MarkdownRenderChild {
 
         // Every change redraws the board, so keep the horizontal scroll position. It is stored per
         // code block on the plugin, so it also survives Obsidian re-rendering the whole code block.
+        // The first time a date board shows (after opening Obsidian, or after a grouping change), it starts at today.
         if (!this.plugin.boardScroll) this.plugin.boardScroll = new Map();
-        const scrollKey = `${this.ctx.sourcePath}\n${this.source}`;
-        board.scrollLeft = this.plugin.boardScroll.get(scrollKey) || 0;
+        const scrollKey = `${this.ctx.sourcePath}\n${this.source}\n${this.state.groupBy}`;
+        if (this.plugin.boardScroll.has(scrollKey)) {
+            board.scrollLeft = this.plugin.boardScroll.get(scrollKey);
+        } else {
+            const currentCol = columns.findIndex(c => c.isCurrent);
+            // Wait for layout, the column positions are not known yet
+            if (currentCol > 0) requestAnimationFrame(() => {
+                const colEl = board.children[currentCol];
+                if (colEl) board.scrollLeft = colEl.getBoundingClientRect().left - board.getBoundingClientRect().left + board.scrollLeft;
+            });
+        }
         board.addEventListener('scroll', () => this.plugin.boardScroll.set(scrollKey, board.scrollLeft));
+
+        // Columns with more than maxCards cards are cut after the last one that fits and scroll inside.
+        // Card heights are only known after layout and change with the view width, so a ResizeObserver
+        // measures again. The scroll position of each column is kept across redraws like the board's.
+        if (this.boardObserver) { this.boardObserver.disconnect(); this.boardObserver = null; }
+        const maxCards = this.state.maxCards;
+        if (maxCards > 0 && typeof ResizeObserver !== 'undefined') {
+            const bodies = Array.from(board.querySelectorAll('.simple-tasks-column-body'));
+            const limitColumns = () => bodies.forEach((body, i) => {
+                const last = body.children[maxCards - 1];
+                if (body.children.length <= maxCards || !last || last.offsetHeight === 0) { body.style.maxHeight = ''; return; }
+                body.style.maxHeight = `${last.offsetTop + last.offsetHeight + parseFloat(getComputedStyle(body).paddingBottom)}px`;
+                const colKey = `${scrollKey}\n${columns[i].key}`;
+                if (!body.dataset.scrollRestored) { body.dataset.scrollRestored = 'true'; body.scrollTop = this.plugin.boardScroll.get(colKey) || 0; }
+                if (!body.dataset.scrollTracked) { body.dataset.scrollTracked = 'true'; body.addEventListener('scroll', () => this.plugin.boardScroll.set(colKey, body.scrollTop)); }
+            });
+            // Next frame, so changing the heights does not resize the board inside the observer callback
+            this.boardObserver = new ResizeObserver(() => requestAnimationFrame(limitColumns));
+            this.boardObserver.observe(board);
+            board.addClass('has-card-limit');
+        }
     }
 
     // Menu of all categories in the vault; picking one replaces the clicked category in the task line
@@ -899,19 +988,21 @@ class SimpleTasksView extends MarkdownRenderChild {
     // Changes one task line in its note. edit(prefix, mark, text) returns the new { mark, text }.
     // Nothing is written if the line no longer holds this task (the note changed since the last scan).
     // Returns true when the line was written. With refresh = false the caller redraws the view.
+    // vault.process reads and writes in one step, so quick changes to tasks of the same note don't overwrite each other.
     async modifyTaskLine(task, edit, refresh = true) {
-        const content = await this.app.vault.read(task.file);
-        const lines = content.split('\n');
-        const match = lines.length > task.line ? lines[task.line].match(/^(\s*[-*]\s*)\[([ xX\/])\]\s*(.*)$/) : null;
-        if (!match || match[3] !== task.text) {
-            if (refresh) { new Notice('Task changed in the note, refreshing.'); await this.refresh(); }
-            return false;
-        }
-        const result = edit(match[1], match[2], match[3]);
-        lines[task.line] = `${match[1]}[${result.mark}] ${result.text}`;
-        await this.app.vault.modify(task.file, lines.join('\n'));
+        let written = false;
+        await this.app.vault.process(task.file, (content) => {
+            const lines = content.split('\n');
+            const match = lines.length > task.line ? lines[task.line].match(TASK_LINE) : null;
+            if (!match || match[3] !== task.text) return content;
+            const result = edit(match[1], match[2], match[3]);
+            lines[task.line] = `${match[1]}[${result.mark}] ${result.text}${match[4]}`;
+            written = true;
+            return lines.join('\n');
+        });
+        if (!written && refresh) new Notice('Task changed in the note, refreshing.');
         if (refresh) await this.refresh();
-        return true;
+        return written;
     }
 
     // Active due date filter as { from, to } (YYYY-MM-DD, either may be empty), or null for "Any Time"
@@ -941,18 +1032,11 @@ class SimpleTasksView extends MarkdownRenderChild {
     }
 
     async updateTaskDate(task, oldDate, newDate) {
-        const content = await this.app.vault.read(task.file);
-        const lines = content.split('\n');
-        if (lines.length > task.line) {
-            const line = lines[task.line];
-            const lastIndex = line.lastIndexOf(oldDate);
-            if (lastIndex !== -1) {
-                lines[task.line] = line.substring(0, lastIndex) + newDate + line.substring(lastIndex + oldDate.length);
-                await this.app.vault.modify(task.file, lines.join('\n'));
-                new Notice(`Updated date to ${newDate}`);
-                await this.refresh();
-            }
-        }
+        const written = await this.modifyTaskLine(task, (prefix, mark, text) => {
+            const i = text.lastIndexOf(oldDate);
+            return { mark, text: i === -1 ? text : text.substring(0, i) + newDate + text.substring(i + oldDate.length) };
+        });
+        if (written) new Notice(`Updated date to ${newDate}`);
     }
 
     renderStats(tasks) {
@@ -976,14 +1060,32 @@ class SimpleTasksView extends MarkdownRenderChild {
             stat.createSpan({ text: ` (${data.undone}/${data.total})`, cls: 'simple-tasks-stat-counts' });
         });
     }
+    // Left click toggles done and undone; an in progress task becomes done. In progress is set from the right-click menu.
     async toggleTask(task) {
-        // Click cycle: [ ] -> [/] -> [x] -> [ ]
-        const nextMark = { ' ': '/', '/': 'x', 'x': ' ' };
-        task.mark = nextMark[task.mark] || ' '; task.status = task.mark === 'x';
-        this.renderList(); const content = await this.app.vault.read(task.file); const lines = content.split('\n');
-        if (lines.length > task.line) {
-            const match = lines[task.line].match(/^(\s*[-*]\s*)\[([ xX\/])\]/);
-            if (match) { lines[task.line] = match[1] + `[${task.mark}]` + lines[task.line].substring(match[0].length); await this.app.vault.modify(task.file, lines.join('\n')); }
+        await this.setTaskMark(task, task.mark === 'x' ? ' ' : 'x');
+    }
+
+    // Right-click menu with all three statuses
+    showStatusMenu(evt, task) {
+        const menu = new Menu();
+        [[' ', 'Undone'], ['/', 'In progress'], ['x', 'Done']].forEach(([mark, label]) => {
+            menu.addItem(item => item.setTitle(label).setChecked(task.mark === mark).onClick(async () => {
+                if (task.mark !== mark) await this.setTaskMark(task, mark);
+            }));
+        });
+        menu.showAtMouseEvent(evt);
+    }
+
+    async setTaskMark(task, mark) {
+        // Show the new status right away; the note is only written if its line still holds this task
+        const oldMark = task.mark;
+        task.mark = mark; task.status = task.mark === 'x';
+        this.renderList();
+        const written = await this.modifyTaskLine(task, (prefix, m, text) => ({ mark, text }), false);
+        if (!written) {
+            task.mark = oldMark; task.status = oldMark === 'x';
+            new Notice('Task changed in the note, refreshing.');
+            await this.refresh();
         }
     }
 }
@@ -991,13 +1093,25 @@ class SimpleTasksView extends MarkdownRenderChild {
 class SimpleTasksPlugin extends Plugin {
     async onload() {
         await this.loadSettings();
-        this.globalCategoryCache = new Set(['Work', 'Personal', 'Urgent']);
+        // Categories for the [] autocomplete come from the whole vault, not from one board.
+        // Scanned when the vault is ready and again shortly after notes change.
+        this.globalCategoryCache = new Set();
+        this.app.workspace.onLayoutReady(() => this.refreshCategoryCache());
+        this.registerEvent(this.app.metadataCache.on('resolved', () => {
+            if (this.categoryTimer) clearTimeout(this.categoryTimer);
+            this.categoryTimer = setTimeout(() => this.refreshCategoryCache(), 2000);
+        }));
         this.addSettingTab(new SimpleTasksSettingTab(this.app, this));
         this.registerEditorSuggest(new CategorySuggest(this.app, this));
         this.registerMarkdownCodeBlockProcessor("simpletasks", (source, el, ctx) => {
             const view = new SimpleTasksView(this.app, this, source, el, ctx);
             ctx.addChild(view);
         });
+    }
+    onunload() { if (this.categoryTimer) clearTimeout(this.categoryTimer); }
+    async refreshCategoryCache() {
+        const { categoriesSet } = await new TaskScanner(this.app, this).scanVault({}, this.settings);
+        this.globalCategoryCache = categoriesSet;
     }
     async loadSettings() { this.settings = Object.assign({}, { excludedFolders: [], excludedTags: [] }, await this.loadData()); }
     async saveSettings() { await this.saveData(this.settings); }

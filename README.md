@@ -15,7 +15,7 @@ A stateless, zero-database task management plugin for Obsidian. Simple Tasks sca
 
 Simple Tasks recognizes standard markdown tasks. You can enrich them with categories, dates, and tags.
 
-- **Standard Task**: `- [ ] Buy milk`
+- **Standard Task**: `- [ ] Buy milk`. `*`, `+` and numbered (`1.`) list items work too, also inside quotes and callouts (`> - [ ] Buy milk`).
 - **In Progress Task**: `- [/] Buy milk`. Counts as not done in filters and stats. Themes that support it (for example Minimal) draw it as a half-done checkbox.
 - **With Category**: `- [ ] ==Personal== Buy milk`
   - Categories are defined using highlight syntax `==`.
@@ -23,7 +23,7 @@ Simple Tasks recognizes standard markdown tasks. You can enrich them with catego
 
 ### Smart Task Creation
 In any note, type `[]` (or `[ ]`, `[x]`) anywhere in a line. 
-1.  A category menu appears immediately.
+1.  A category menu appears immediately, with all categories used in your vault (just `TODO` while there are none yet). The checkbox at the start of a task line does not open it.
 2.  Selecting a category inserts it at your cursor.
 3.  If the line isn't a task, it is automatically converted (prepending `- [ ]`).
 4.  To add more categories, simply type `[]` again.
@@ -60,7 +60,7 @@ One option per line. All options are optional.
 | `status:` | `all`, `undone`, `done` | `all` | Filter by completion status. Stats ignore this filter, so the counters always show the full picture. |
 | `sort:` | `date`, `name` | `date` | Tasks are always grouped by status first: in progress, then open, then done. Within each group, sort by due date (undated tasks last) or alphabetically by task text. Ties are sorted alphabetically. |
 | `search:` | text | empty | Show only tasks containing this text (case-insensitive). |
-| `==CATEGORY==` | one category per line | none | Category filter. Add several lines to filter on several categories (OR logic). |
+| `==CATEGORY==` | one category per line | none | Category filter. Add several lines to filter on several categories (OR logic). The line must hold only the category. |
 | `cat-mode:` | `include`, `exclude` | `include` | `include` shows only tasks with the selected categories, `exclude` hides them. |
 | `tags:` | `#tag1, #tag2` | none | Show ONLY tasks with these tags (OR logic). `#parent` also matches `#parent/child`. |
 | `folders:` | `Folder1, Folder2` | none | Show ONLY tasks from these folders and their subfolders (OR logic, case-insensitive). |
@@ -71,6 +71,8 @@ One option per line. All options are optional.
 | `wrap:` | `true`, `false` | `true` | `true` shows the whole task text, wrapped over several lines. `false` keeps each task on one line and cuts it with "…" at the view width. |
 | `kanban:` | `true`, `false` | `false` | Show the tasks as a kanban board instead of a list, see below. |
 | `group:` | `category`, `status`, `day`, `week`, `month` | `category` | How the kanban board makes its columns. |
+| `unset:` | `true`, `false` | `false` | Add a column on the right of the kanban board for tasks without the grouped value: **NO CATEGORY** or **NO DATE**. Not used with `group: status`. |
+| `max-cards:` | number, for example `10` | unlimited | Show at most this many cards per kanban column. A longer column is cut after that card and gets its own scrollbar. |
 
 `exclude-tags:` and `exclude-folders:` are accepted as older aliases of `tags:` and `folders:`, with the same "show only" behaviour.
 
@@ -89,15 +91,17 @@ Tasks stay plain task lines in your notes. The board is just another way to show
 
 | `group:` | Columns | Dropping a card on a column |
 | :--- | :--- | :--- |
-| `category` | One per category, plus **NO CATEGORY**. A task with several categories shows in each of their columns. | Replaces all the task's categories with the column's category. On NO CATEGORY it removes them. |
+| `category` | One per category, plus **NO CATEGORY** with `unset: true`. A task with several categories shows in each of their columns. | Replaces all the task's categories with the column's category. On NO CATEGORY it removes them. |
 | `status` | **Undone**, **In progress**, **Done** (only those allowed by the status filter). | Sets `[ ]`, `[/]` or `[x]`. |
-| `day` | One per due date, plus today and **NO DATE**. | Sets the due date to that day. |
-| `week` | One per ISO week (Monday to Sunday) with tasks, plus the current week and **NO DATE**. | Sets the due date to the Friday of that week. |
-| `month` | One per month with tasks, plus the current month and **NO DATE**. | Sets the due date to the last working day (Monday to Friday) of that month. |
+| `day` | One per due date, plus today, plus **NO DATE** with `unset: true`. | Sets the due date to that day. |
+| `week` | One per ISO week (Monday to Sunday) with tasks, plus the current week, plus **NO DATE** with `unset: true`. | Sets the due date to the Friday of that week. |
+| `month` | One per month with tasks, plus the current month, plus **NO DATE** with `unset: true`. | Sets the due date to the last working day (Monday to Friday) of that month. |
 
 - Drag a column header onto another column to move all its cards at once. Each card changes as if it was dropped on its own, by the rules above.
 - Category columns come from the tasks the view shows before the status filter. A category column disappears when its last task moves out. To keep one on the board, select it in the category filter: with selected categories (IS mode) the board shows exactly those columns, even when empty.
-- With a date filter, the board also shows the empty days, weeks or months in that range (up to 62 columns), and hides NO DATE, because undated tasks are filtered out.
+- With a date filter, the board also shows the empty days, weeks or months in that range (up to 62 columns).
+- The **Unset** column (`unset: true`) is always the rightmost one. It shows the tasks without the grouped value even when a filter would hide them: undated tasks pass the date filter, and tasks without a category pass the IS category filter. The other filters still apply.
+- A board grouped by day, week or month opens scrolled to today's column. After that it keeps your scroll position while Obsidian runs.
 - On NO DATE, a dropped card loses its due date. If a task has no date yet, the new date is added at the end of the line.
 - Drag and drop needs a mouse. On touch devices (Obsidian mobile) the board can be viewed, but cards can't be dragged.
 
@@ -110,14 +114,14 @@ The plugin settings have global excluded folders and tags. They apply to every v
 - **Title**: click it to rename the view.
 - **List / Stats checkboxes**: toggle the two views.
 - **Filters checkbox**: show or hide the filter panel.
-- **Search, tag and folder fields**: same as `search:`, `tags:` and `folders:`. The folder field suggests folders as you type.
+- **Search, "Only tags" and "Only folders" fields**: same as `search:`, `tags:` and `folders:`. The folder field suggests folders as you type.
 - **Wrap checkbox** (next to the folder field): same as `wrap:`. Switch between full wrapped task text and one cut line per task. Hover over a cut task or file name to see the full text.
-- **Kanban checkbox** (next to Wrap): same as `kanban:`. When on, a dropdown next to it picks the grouping, same as `group:`.
+- **Kanban checkbox** (next to Wrap): same as `kanban:`. When on, a dropdown next to it picks the grouping, same as `group:`, and an **Unset** checkbox after it adds the column for tasks without a category or due date, same as `unset:`. The last dropdown sets how many cards a column shows before it scrolls (Unlimited, 10, 20 or 30), same as `max-cards:`.
 - **Status, sort and date dropdowns**: same as `status:`, `sort:` and `date:` / `from:` / `to:`. Pick "Any Time", "Relative" or "Range".
 - **IS / NOT chip**: switch the category filter between include and exclude.
 - **Category chips**: click to toggle a category. "ALL" clears the category filter.
-- **Checkboxes in the list**: each click moves the task to the next status, `[ ]` → `[/]` → `[x]` → `[ ]`. The note is updated.
+- **Checkboxes in the list and on cards**: a click switches the task between undone `[ ]` and done `[x]`. An in progress task becomes done. Right-click a checkbox to pick Undone, In progress or Done from a menu. The note is updated.
 - **Due dates in the list**: click a date to change it with a date picker. The note is updated.
 - **Categories in the list and on cards**: click a category to pick another one from all categories in the vault. Only the clicked category is replaced. If the task already has the picked category, the clicked one is just removed. The note is updated.
-- **Save (💾)**: write the current filters back into the code block.
+- **Save (💾)**: write the current filters back into the code block, in the note that holds it.
 - **Refresh (⟳)**: force a manual vault scan.

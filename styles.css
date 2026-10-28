@@ -329,6 +329,12 @@
     background: var(--background-primary-alt);
 }
 
+/* With a card limit, a long column scrolls inside; relative so card offsetTop is measured from the body */
+.simple-tasks-board.has-card-limit .simple-tasks-column-body {
+    position: relative;
+    overflow-y: auto;
+}
+
 .simple-tasks-column-body.is-drop-target {
     outline: 2px dashed var(--interactive-accent);
     outline-offset: -2px;
