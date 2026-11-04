@@ -97,6 +97,7 @@ Tasks stay plain task lines in your notes. The board is just another way to show
 | `week` | One per ISO week (Monday to Sunday) with tasks, plus the current week, plus **NO DATE** with `unset: true`. | Sets the due date to the Friday of that week. |
 | `month` | One per month with tasks, plus the current month, plus **NO DATE** with `unset: true`. | Sets the due date to the last working day (Monday to Friday) of that month. |
 
+- Click **+** in a column header to add a task there, see [Adding tasks](#adding-tasks). The NO CATEGORY column has no +, because a new task needs a category.
 - Drag a column header onto another column to move all its cards at once. Each card changes as if it was dropped on its own, by the rules above.
 - Category columns come from the tasks the view shows before the status filter. A category column disappears when its last task moves out. To keep one on the board, select it in the category filter: with selected categories (IS mode) the board shows exactly those columns, even when empty.
 - With a date filter, the board also shows the empty days, weeks or months in that range (up to 62 columns).
@@ -104,6 +105,19 @@ Tasks stay plain task lines in your notes. The board is just another way to show
 - A board grouped by day, week or month opens scrolled to today's column. After that it keeps your scroll position while Obsidian runs.
 - On NO DATE, a dropped card loses its due date. If a task has no date yet, the new date is added at the end of the line.
 - Drag and drop needs a mouse. On touch devices (Obsidian mobile) the board can be viewed, but cards can't be dragged.
+
+#### Adding tasks
+
+Click **+ Add task** above the list, or **+** in a kanban column header. A window asks for:
+
+- **Task**: the text. Required.
+- **Categories**: click the chips to pick one or more, or type a new category and press Enter. At least one is required.
+- **Status**: Undone, In progress or Done.
+- **Due date**: optional.
+
+The fields start with what the column stands for: its category, status or date. A week column suggests its Friday and a month column its last working day, like dropping a card there. When the category filter has exactly one category selected (IS mode), that category is preselected. You can change everything before adding.
+
+The task is added to today's daily note as `- [ ] ==CATEGORY== text 2026-11-07`. The note's folder, date format and template come from the core Daily notes plugin settings. If the note doesn't exist yet, it is created from that template. In the Simple Tasks settings, **Add new tasks under heading** picks the section: the task goes on a new line after the last line of that heading's section. Leave it empty to add tasks at the end of the note. If the view's filters hide the new task, a notice says so.
 
 #### Tag and folder filters vs global exclusions
 

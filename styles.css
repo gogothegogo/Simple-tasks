@@ -301,6 +301,46 @@
     font-size: var(--font-ui-small);
 }
 
+.simple-tasks-column-head-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.simple-tasks-column-add {
+    padding: 0 4px;
+    height: auto;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.simple-tasks-add-list-btn {
+    margin-bottom: 8px;
+}
+
+/* New task modal */
+.simple-tasks-add-modal .simple-tasks-add-label {
+    display: block;
+    margin: 10px 0 4px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+
+.simple-tasks-add-modal .simple-tasks-add-text,
+.simple-tasks-add-modal .simple-tasks-add-newcat {
+    width: 100%;
+}
+
+.simple-tasks-add-modal .simple-tasks-add-chips {
+    margin-bottom: 6px;
+}
+
+.simple-tasks-add-modal .simple-tasks-add-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
 .simple-tasks-column-head.is-draggable {
     cursor: grab;
 }

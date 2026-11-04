@@ -26,7 +26,8 @@ Everything lives in `main.js`. The classes and their responsibilities:
 | Class | Role |
 |---|---|
 | `SimpleTasksPlugin` | Obsidian `Plugin` entry point. Registers the settings tab, the `simpletasks` codeblock processor, and the `CategorySuggest` editor suggest. Owns `globalCategoryCache` (a `Set` of all categories in the vault, from its own scan on layout ready and 2 s after `resolved`; the suggester falls back to `TODO` when it is empty). |
-| `SimpleTasksSettingTab` | Renders the *global* exclusion settings (`excludedFolders`, `excludedTags`) persisted to `data.json`. |
+| `SimpleTasksSettingTab` | Renders the *global* settings persisted to `data.json`: exclusions (`excludedFolders`, `excludedTags`) and `newTaskHeading`. |
+| `AddTaskModal` | The new task window: text, category chips plus a new-category field, status and due date. |
 | `TaskScanner` | Walks every markdown file via `app.vault.getMarkdownFiles()`, filters using `metadataCache.getFileCache(...).listItems`, and reads matching files with `cachedRead`. Returns `{ tasks, categoriesSet }`. |
 | `SimpleTasksView` | One instance per `simpletasks` codeblock. Owns view state, parses codeblock config, debounces refresh on `metadataCache.on('resolved')` (1 s), and renders header / filter row / list / stats. Persists state back into the codeblock via `saveSettingsToCodeBlock()`. |
 | `CategorySuggest` | `EditorSuggest` triggered by typing `[]`, `[ ]`, or `[x]` mid-line (never by the checkbox of a task line itself). Inserts `==CATEGORY==`; if the line is not yet a task, rewrites it as `- [ ] ...` with categories appended. |
@@ -58,6 +59,10 @@ Parsed line-by-line in `parseConfig`. Recognized keys: `title:`, `view:` (`list`
 ### Kanban
 
 `kanban: true` swaps the list for a board (`renderKanban`), `group:` picks the columns (`KANBAN_GROUPS`: `category`, `status`, `day`, `week`, `month`). `renderList` does all filtering and sorting first, then hands the sorted tasks to the board, so filters and order are shared. `renderTaskRow` renders checkbox, text and file name for both list rows and cards. `buildKanbanColumns` makes the columns: category columns come from `statsScopedTasks` (before the status filter), or are exactly the selected categories in include mode; date columns come from task dates plus the current period plus every period of the date filter (`getDateRange`, max 62). `state.unsetColumn` (`unset:`) adds NO CATEGORY / NO DATE as the last column, and in `renderList` it lets undated tasks pass the date filter (date groups) or uncategorized tasks pass the include category filter (category group). The board scroll position is kept per code block and grouping in `plugin.boardScroll`; with no saved position a date board scrolls to its `isCurrent` column. With `state.maxCards`, a `ResizeObserver` (`this.boardObserver`) sets each column body's `max-height` to the bottom of its Nth card, so the column scrolls inside; the column scroll positions are kept in the same map. A drag carries `this.drag = { tasks, from }`: one card, or every card of the column when the header is dragged. The whole column (header and body) is the drop target. Drops go through `moveTasksToColumn` → `moveTaskToColumn` → `modifyTaskLine` per task with `refresh = false`, then one refresh. `modifyTaskLine` re-reads the note and refuses to write if the line no longer holds the same task text. Week drops set the Friday of the ISO week, month drops the last Monday to Friday day of the month (`dropDate`). Drag and drop is HTML5 DnD, so it does not work on touch.
+
+### Adding tasks
+
+`openAddTask(col)` (kanban column +, or `null` for the list button) fills defaults from the column and the category filter and opens `AddTaskModal`. `addTask` builds the line, gets today's note from `plugin.getTodayNote()` (core Daily notes options: folder, format, template; created when missing, with `{{date}}`, `{{time}}` and `{{title}}` replaced) and writes with `insertUnderHeading(content, settings.newTaskHeading, line)`. It waits for the metadata cache `changed` event of that note before refreshing, then checks `this.visibleTasks` to tell whether the filters hide the task.
 
 ### Category menu
 

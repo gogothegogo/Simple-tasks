@@ -1,6 +1,6 @@
 'use strict';
 
-const { Plugin, PluginSettingTab, Setting, MarkdownRenderChild, AbstractInputSuggest, EditorSuggest, moment, MarkdownView, Notice, Menu } = require('obsidian');
+const { Plugin, PluginSettingTab, Setting, MarkdownRenderChild, AbstractInputSuggest, EditorSuggest, moment, MarkdownView, Notice, Menu, Modal, normalizePath } = require('obsidian');
 
 // Kanban grouping options: [codeblock value, dropdown label]
 const KANBAN_GROUPS = [['category', 'By Category'], ['status', 'By Status'], ['day', 'By Day'], ['week', 'By Week'], ['month', 'By Month']];
@@ -10,6 +10,26 @@ const NO_DATE = 'NO DATE';
 const TASK_LINE = /^((?:\s*>)*\s*(?:[-*+]|\d+[.)])\s*)\[([ xX\/])\]\s*(.*?)(\r?)$/;
 // Tags start at the beginning of the text or after a space, so a URL like page#section is not a tag
 const TAG_REGEX = /(?:^|\s)(#[\p{L}\p{N}_\/-]+)/gu;
+
+// Adds a line right after the last non-empty line of a heading's section (up to the next heading),
+// or after the last non-empty line of the note when there is no heading or it is not found.
+function insertUnderHeading(content, heading, newLine) {
+    const eol = content.includes('\r\n') ? '\r\n' : '\n';
+    const lines = content.split(/\r?\n/);
+    let start = -1, end = lines.length;
+    if (heading) {
+        const wanted = heading.trim().toLowerCase();
+        start = lines.findIndex(l => /^#{1,6}\s/.test(l) && l.replace(/^#{1,6}\s+/, '').trim().toLowerCase() === wanted);
+        if (start !== -1) {
+            const next = lines.findIndex((l, i) => i > start && /^#{1,6}\s/.test(l));
+            if (next !== -1) end = next;
+        }
+    }
+    let insertAt = start + 1;
+    for (let i = end - 1; i > start; i--) { if (lines[i].trim() !== '') { insertAt = i + 1; break; } }
+    lines.splice(insertAt, 0, newLine);
+    return lines.join(eol);
+}
 
 class TaskScanner {
     constructor(app, plugin) {
@@ -262,7 +282,82 @@ class SimpleTasksSettingTab extends PluginSettingTab {
             this.plugin.settings.excludedTags = value.split('\n').map(s => s.trim()).filter(s => s.length > 0);
             await this.plugin.saveSettings();
         }));
+        new Setting(containerEl).setName('New tasks').setHeading();
+        new Setting(containerEl).setName('Add new tasks under heading')
+            .setDesc("Tasks added with + go into today's daily note, on a new line at the end of this heading's section. Leave empty to add them at the end of the note.")
+            .addText(text => text.setPlaceholder('DAILY LOG').setValue(this.plugin.settings.newTaskHeading || '').onChange(async (value) => {
+                this.plugin.settings.newTaskHeading = value.trim().replace(/^#+\s*/, '');
+                await this.plugin.saveSettings();
+            }));
     }
+}
+
+// Modal for a new task: text, one or more categories (existing or new), status and due date
+class AddTaskModal extends Modal {
+    constructor(app, categories, defaults, onSubmit) {
+        super(app);
+        this.categories = categories; this.defaults = defaults; this.onSubmit = onSubmit;
+    }
+    onOpen() {
+        const { contentEl } = this;
+        this.titleEl.setText('New task');
+        contentEl.addClass('simple-tasks-add-modal');
+        const selected = new Set(this.defaults.categories);
+        const all = Array.from(new Set([...this.categories, ...selected])).sort();
+
+        contentEl.createEl('label', { text: 'Task', cls: 'simple-tasks-add-label' });
+        const textInput = contentEl.createEl('input', { type: 'text', cls: 'simple-tasks-add-text', placeholder: 'What needs to be done?' });
+
+        contentEl.createEl('label', { text: 'Categories (at least one)', cls: 'simple-tasks-add-label' });
+        const chips = contentEl.createDiv('simple-tasks-bar-inline simple-tasks-add-chips');
+        const renderChips = () => {
+            chips.empty();
+            all.forEach(cat => {
+                const chip = chips.createEl('div', { text: cat, cls: 'simple-tasks-chip' + (selected.has(cat) ? ' is-active' : '') });
+                chip.onclick = () => { if (selected.has(cat)) selected.delete(cat); else selected.add(cat); renderChips(); };
+            });
+        };
+        renderChips();
+        const newCat = contentEl.createEl('input', { type: 'text', cls: 'simple-tasks-add-newcat', placeholder: 'New category, press Enter to add' });
+        const addNewCategory = () => {
+            const cat = newCat.value.replace(/=/g, '').trim().toUpperCase();
+            if (!cat) return false;
+            if (!all.includes(cat)) { all.push(cat); all.sort(); }
+            selected.add(cat); newCat.value = ''; renderChips();
+            return true;
+        };
+        newCat.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); addNewCategory(); } });
+
+        const row = contentEl.createDiv('simple-tasks-add-row');
+        const statusWrap = row.createDiv();
+        statusWrap.createEl('label', { text: 'Status', cls: 'simple-tasks-add-label' });
+        const statusSelect = statusWrap.createEl('select', { cls: 'dropdown' });
+        [[' ', 'Undone'], ['/', 'In progress'], ['x', 'Done']].forEach(([v, l]) => {
+            const opt = statusSelect.createEl('option', { value: v, text: l }); if (this.defaults.mark === v) opt.selected = true;
+        });
+        const dateWrap = row.createDiv();
+        dateWrap.createEl('label', { text: 'Due date', cls: 'simple-tasks-add-label' });
+        const dateInput = dateWrap.createEl('input', { type: 'date' }); dateInput.value = this.defaults.date || '';
+
+        const buttons = contentEl.createDiv('modal-button-container');
+        const addBtn = buttons.createEl('button', { text: 'Add task', cls: 'mod-cta' });
+        const cancelBtn = buttons.createEl('button', { text: 'Cancel' });
+        cancelBtn.onclick = () => this.close();
+        const submit = async () => {
+            // A category typed but not confirmed with Enter still counts
+            addNewCategory();
+            const text = textInput.value.trim();
+            if (!text) { new Notice('Write the task text.'); textInput.focus(); return; }
+            if (selected.size === 0) { new Notice('Pick at least one category.'); newCat.focus(); return; }
+            addBtn.disabled = true;
+            const ok = await this.onSubmit({ text, categories: Array.from(selected), mark: statusSelect.value, date: dateInput.value });
+            if (ok) this.close(); else addBtn.disabled = false;
+        };
+        addBtn.onclick = submit;
+        textInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+        setTimeout(() => textInput.focus(), 0);
+    }
+    onClose() { this.contentEl.empty(); }
 }
 
 class SimpleTasksView extends MarkdownRenderChild {
@@ -631,7 +726,10 @@ class SimpleTasksView extends MarkdownRenderChild {
             }
             return cmpName();
         });
+        this.visibleTasks = filtered;
         if (this.state.kanban) { this.renderKanban(filtered, dateRange, statsScopedTasks); return; }
+        const addBtn = this.listContainer.createEl('button', { text: '+ Add task', cls: 'simple-tasks-add-list-btn', title: "Add a task to today's daily note" });
+        addBtn.onclick = () => this.openAddTask(null);
         const ul = this.listContainer.createEl('ul', { cls: 'simple-tasks-list' });
         if (filtered.length === 0) { ul.createEl('li', { text: 'No matching tasks.', cls: 'simple-tasks-empty' }); return; }
         filtered.forEach(task => this.renderTaskRow(ul.createEl('li', { cls: 'simple-tasks-item' }), task));
@@ -842,7 +940,14 @@ class SimpleTasksView extends MarkdownRenderChild {
             const colEl = board.createDiv('simple-tasks-column');
             const head = colEl.createDiv({ cls: 'simple-tasks-column-head' + (col.isCurrent ? ' is-current' : '') });
             head.createSpan({ text: col.label, cls: 'simple-tasks-column-title' });
-            head.createSpan({ text: String(col.tasks.length), cls: 'simple-tasks-column-count' });
+            const headRight = head.createSpan('simple-tasks-column-head-right');
+            headRight.createSpan({ text: String(col.tasks.length), cls: 'simple-tasks-column-count' });
+            // A new task needs a category, so the NO CATEGORY column has no add button
+            if (col.key !== NO_CATEGORY) {
+                const addBtn = headRight.createEl('button', { text: '+', cls: 'clickable-icon simple-tasks-column-add', title: 'Add a task to this column' });
+                addBtn.draggable = false;
+                addBtn.onclick = (e) => { e.stopPropagation(); this.openAddTask(col); };
+            }
             // Dragging the header moves every card of the column
             if (col.tasks.length > 0) {
                 head.draggable = true;
@@ -951,6 +1056,39 @@ class SimpleTasksView extends MarkdownRenderChild {
             }));
         });
         menu.showAtMouseEvent(evt);
+    }
+
+    // Opens the new task modal. col is the kanban column the + belongs to, or null for the list button.
+    openAddTask(col) {
+        const group = this.state.groupBy;
+        const defaults = { categories: [], mark: ' ', date: '' };
+        if (col && group === 'category') defaults.categories = [col.key];
+        else if (this.state.categoryFilterMode === 'include' && this.state.filterCategories.size === 1) {
+            defaults.categories = [Array.from(this.state.filterCategories)[0].toUpperCase()];
+        }
+        if (col && group === 'status') defaults.mark = col.key;
+        if (col && (group === 'day' || group === 'week' || group === 'month') && col.key !== NO_DATE) defaults.date = this.dropDate(col.key);
+        new AddTaskModal(this.app, Array.from(this.plugin.globalCategoryCache || []), defaults, (task) => this.addTask(task)).open();
+    }
+
+    // Appends the new task to today's daily note and tells when the current filters hide it. Returns true when added.
+    async addTask({ text, categories, mark, date }) {
+        const line = `- [${mark}] ${categories.map(c => `==${c}==`).join(' ')} ${text.replace(/\s+/g, ' ')}${date ? ' ' + date : ''}`;
+        let file;
+        try { file = await this.plugin.getTodayNote(); }
+        catch (e) { new Notice(`Could not open today's daily note: ${e.message}`); return false; }
+        // Wait for the metadata cache to see the new line, otherwise the rescan misses the task
+        const cached = new Promise(resolve => {
+            const ref = this.app.metadataCache.on('changed', (f) => { if (f.path === file.path) { this.app.metadataCache.offref(ref); resolve(); } });
+            setTimeout(() => { this.app.metadataCache.offref(ref); resolve(); }, 3000);
+        });
+        await this.app.vault.process(file, (content) => insertUnderHeading(content, this.plugin.settings.newTaskHeading, line));
+        await cached;
+        await this.refresh();
+        const lineText = line.replace(TASK_LINE, '$3');
+        const visible = (this.visibleTasks || []).some(t => t.file.path === file.path && t.text === lineText);
+        new Notice(visible ? `Task added to ${file.basename}` : `Task added to ${file.basename}, but the current filters hide it`);
+        return true;
     }
 
     // Moves dropped tasks (one card, or all cards of a dragged column) and redraws once at the end
@@ -1113,7 +1251,33 @@ class SimpleTasksPlugin extends Plugin {
         const { categoriesSet } = await new TaskScanner(this.app, this).scanVault({}, this.settings);
         this.globalCategoryCache = categoriesSet;
     }
-    async loadSettings() { this.settings = Object.assign({}, { excludedFolders: [], excludedTags: [] }, await this.loadData()); }
+    // Today's daily note from the core Daily notes settings (folder, date format, template). Created when missing.
+    async getTodayNote() {
+        const daily = this.app.internalPlugins && this.app.internalPlugins.getPluginById ? this.app.internalPlugins.getPluginById('daily-notes') : null;
+        const options = (daily && daily.instance && daily.instance.options) || {};
+        const format = options.format || 'YYYY-MM-DD';
+        const folder = (options.folder || '').trim().replace(/^\/+|\/+$/g, '');
+        const now = moment();
+        const path = normalizePath(`${folder ? folder + '/' : ''}${now.format(format)}.md`);
+        const existing = this.app.vault.getAbstractFileByPath(path);
+        if (existing) return existing;
+
+        let content = '';
+        const templatePath = (options.template || '').trim();
+        if (templatePath) {
+            const template = this.app.vault.getAbstractFileByPath(normalizePath(templatePath.endsWith('.md') ? templatePath : templatePath + '.md'));
+            if (template) content = await this.app.vault.read(template);
+        }
+        // The core template placeholders
+        content = content
+            .replace(/{{\s*title\s*}}/gi, now.format(format))
+            .replace(/{{\s*date\s*(?::([^}]+))?}}/gi, (m, f) => now.format((f || format).trim()))
+            .replace(/{{\s*time\s*(?::([^}]+))?}}/gi, (m, f) => now.format((f || 'HH:mm').trim()));
+        const parent = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '';
+        if (parent && !this.app.vault.getAbstractFileByPath(parent)) await this.app.vault.createFolder(parent);
+        return this.app.vault.create(path, content);
+    }
+    async loadSettings() { this.settings = Object.assign({}, { excludedFolders: [], excludedTags: [], newTaskHeading: '' }, await this.loadData()); }
     async saveSettings() { await this.saveData(this.settings); }
 }
 
